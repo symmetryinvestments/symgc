@@ -1,5 +1,4 @@
 module d.gc.spec;
-version(none):
 
 import d.gc.util;
 
