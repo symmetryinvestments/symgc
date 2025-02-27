@@ -1,5 +1,4 @@
 module d.gc.allocclass;
-version(none):
 
 ubyte getAllocClass(size_t pages) {
 	if (pages <= 8) {
