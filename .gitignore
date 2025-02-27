@@ -1,0 +1,16 @@
+.dub
+docs.json
+__dummy.html
+docs/
+/sdcgc
+sdcgc.so
+sdcgc.dylib
+sdcgc.dll
+sdcgc.a
+sdcgc.lib
+sdcgc-test-*
+*.exe
+*.pdb
+*.o
+*.obj
+*.lst
