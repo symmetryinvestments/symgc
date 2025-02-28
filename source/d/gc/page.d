@@ -322,7 +322,7 @@ private:
 			return null;
 		}
 
-		auto block = acquireBlock(false, extraBlocks);
+		auto block = acquireSparseBlock(extraBlocks);
 		if (unlikely(block is null)) {
 			unusedExtents.insert(e);
 			return null;
@@ -514,20 +514,28 @@ private:
 	BlockDescriptor* extractBlock(uint pages, uint mask, bool dense) {
 		assert(mutex.isHeld(), "Mutex not held!");
 
-		auto filter = getFilterPtr(dense);
+		return dense
+			? extractBlockImpl!true(pages, mask)
+			: extractBlockImpl!false(pages, mask);
+	}
+
+	BlockDescriptor* extractBlockImpl(bool Dense)(uint pages, uint mask) {
+		assert(mutex.isHeld(), "Mutex not held!");
+
+		auto filter = getFilterPtr(Dense);
 		auto acfilter = *filter & mask;
 		if (acfilter == 0) {
-			return acquireBlock(dense);
+			return acquireBlock!Dense();
 		}
 
 		auto index = countTrailingZeros(acfilter);
-		auto heaps = getHeaps(dense);
+		auto heaps = getHeaps(Dense);
 
 		auto block = heaps[index].pop();
 		*filter &= ~(uint(heaps[index].empty) << index);
 
 		assert(block !is null);
-		assert(block.dense == dense);
+		assert(block.dense == Dense);
 		return block;
 	}
 
@@ -577,9 +585,21 @@ private:
 		return dense ? &denseBlocks : &sparseBlocks;
 	}
 
-	BlockDescriptor* acquireBlock(bool dense, uint extraBlocks = 0) {
+	BlockDescriptor* acquireDenseBlock() {
 		assert(mutex.isHeld(), "Mutex not held!");
-		assert(!dense || extraBlocks == 0, "Huge allocations cannot be dense!");
+
+		return acquireBlock!true(0);
+	}
+
+	BlockDescriptor* acquireSparseBlock(uint extraBlocks = 0) {
+		assert(mutex.isHeld(), "Mutex not held!");
+
+		return acquireBlock!false(extraBlocks);
+	}
+
+	BlockDescriptor* acquireBlock(bool Dense)(uint extraBlocks = 0) {
+		assert(mutex.isHeld(), "Mutex not held!");
+		assert(!Dense || extraBlocks == 0, "Huge allocations cannot be dense!");
 
 		if (!refillBlockDescriptors()) {
 			return null;
@@ -593,8 +613,8 @@ private:
 		auto block = unusedBlockDescriptors.pop();
 		assert(block !is null);
 
-		block.at(address, dense);
-		getAllBlocks(dense).insert(block);
+		block.at(address, Dense);
+		getAllBlocks(Dense).insert(block);
 		return block;
 	}
 
@@ -850,13 +870,7 @@ private:
 				auto nslots = binInfos[sc].nslots;
 				auto nimble = alignUp(nslots, 64) / 64;
 
-				ulong* bmp;
-				if (ec.supportsInlineMarking) {
-					bmp = cast(ulong*) &e.slabMetadataMarks;
-				} else {
-					bmp = e.outlineMarksBuffer;
-					e.outlineMarksBuffer = null;
-				}
+				ulong* bmp = e.getMarksDenseAndClearOutlines();
 
 				assert(bmp !is null);
 
@@ -940,13 +954,12 @@ private:
 				auto npages = e.npages;
 				scope(success) i += npages;
 
-				auto w = e.gcWord.load();
 				auto ec = pd.extentClass;
 				if (ec.isLarge()) {
 					// Make sure we handle huge extents correctly.
 					npages = modUp(npages, PagesInBlock);
 
-					if (w == gcCycle) {
+					if (e.isMarkedLarge(gcCycle)) {
 						// It's alive.
 						continue;
 					}
@@ -962,20 +975,15 @@ private:
 					continue;
 				}
 
-				auto markCycle = w & 0xff;
-				auto markBits = w >> 8;
+				auto markBits = e.getMarksSparse(gcCycle);
+
 				auto metadataFlags = e.slabMetadataFlags.rawContent[0];
 
-				// If the cycle do not match, then all the element are dead.
-				if (markCycle != gcCycle) {
-					// If no metadata exists, we can short circuit here.
-					if (metadataFlags == 0) {
-						deadExtents.insert(e);
-						continue;
-					}
-
-					// Otherwise we run finalizers.
-					markBits = 0;
+				// If completely empty and no metadata exists,
+				// we can short circuit here.
+				if (markBits == 0 && metadataFlags == 0) {
+					deadExtents.insert(e);
+					continue;
 				}
 
 				auto oldOccupancy = e.slabData.rawContent[0];

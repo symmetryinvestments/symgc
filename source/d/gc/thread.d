@@ -10,6 +10,9 @@ void createProcess() {
 	enterBusyState();
 	scope(exit) exitBusyState();
 
+	import d.gc.fork;
+	setupFork();
+
 	import d.gc.signal;
 	setupSignals();
 
@@ -22,10 +25,13 @@ void createProcess() {
 	registerTlsSegments();
 }
 
-void createThread() {
+void createThread(bool AllowStopTheWorld)() {
 	enterBusyState();
 	scope(exit) {
-		exitThreadCreation();
+		if (AllowStopTheWorld) {
+			allowStopTheWorld();
+		}
+
 		exitBusyState();
 	}
 
@@ -36,16 +42,23 @@ void createThread() {
 }
 
 void destroyThread() {
+	/**
+	 * Note: we are about to remove the thread from the active thread
+	 * list, we do not want to suspend, because the thread will never be
+	 * woken up. Therefore -- no exitBusyState.
+	 */
+	enterBusyState();
+
 	threadCache.destroyThread();
 	gThreadState.remove(&threadCache);
 }
 
-void enterThreadCreation() {
-	gThreadState.enterThreadCreation();
+void preventStopTheWorld() {
+	gThreadState.preventStopTheWorld();
 }
 
-void exitThreadCreation() {
-	gThreadState.exitThreadCreation();
+void allowStopTheWorld() {
+	gThreadState.allowStopTheWorld();
 }
 
 uint getRegisteredThreadCount() {
@@ -105,9 +118,6 @@ void initThread() {
 
 struct ThreadState {
 private:
-	import d.sync.atomic;
-	Atomic!uint startingThreadCount;
-
 	import d.sync.mutex;
 	shared Mutex mStats;
 
@@ -117,21 +127,24 @@ private:
 	Mutex mThreadList;
 	ThreadRing registeredThreads;
 
-	Mutex stopTheWorldMutex;
+	import d.sync.sharedlock;
+	shared SharedLock stopTheWorldLock;
 
 public:
 	/**
+	 * Stop the world prevention.
+	 */
+	void preventStopTheWorld() shared {
+		stopTheWorldLock.sharedLock();
+	}
+
+	void allowStopTheWorld() shared {
+		stopTheWorldLock.sharedUnlock();
+	}
+
+	/**
 	 * Thread management.
 	 */
-	void enterThreadCreation() shared {
-		startingThreadCount.fetchAdd(1);
-	}
-
-	void exitThreadCreation() shared {
-		auto s = startingThreadCount.fetchSub(1);
-		assert(s > 0, "enterThreadCreation was not called!");
-	}
-
 	void register(ThreadCache* tcache) shared {
 		mThreadList.lock();
 		scope(exit) mThreadList.unlock();
@@ -172,11 +185,12 @@ public:
 		import d.gc.hooks;
 		__sd_gc_pre_stop_the_world_hook();
 
-		stopTheWorldMutex.lock();
+		// Prevent any new threads from being created
+		stopTheWorldLock.exclusiveLock();
 
 		uint count;
-		while (suspendRunningThreads(count++)
-			       || startingThreadCount.load() > 0) {
+
+		while (suspendRunningThreads(count++)) {
 			import sys.posix.sched;
 			sched_yield();
 		}
@@ -188,14 +202,15 @@ public:
 			sched_yield();
 		}
 
-		stopTheWorldMutex.unlock();
+		// Allow thread creation again.
+		stopTheWorldLock.exclusiveUnlock();
 
 		import d.gc.hooks;
 		__sd_gc_post_restart_the_world_hook();
 	}
 
 	void scanSuspendedThreads(ScanDg scan) shared {
-		assert(stopTheWorldMutex.isHeld());
+		assert(stopTheWorldLock.count == SharedLock.Exclusive);
 
 		mThreadList.lock();
 		scope(exit) mThreadList.unlock();

@@ -19,8 +19,20 @@ private:
 
 public:
 	ubyte nextGCCycle() shared {
-		auto c = cycle.fetchAdd(1);
-		return (c + 1) & ubyte.max;
+		auto old = cycle.load();
+		while (true) {
+			/**
+			 * Because we initialize extents with cycle 0, we want to make sure
+			 * the chosen GC cycle is never 0. To do so, we ensure it is odd.
+			 * Alternatively, we could try to initialize the cycle to
+			 * a specific value. This is almost certainly necessary if we want
+			 * to go concurrent.
+			 */
+			ubyte c = ((old + 1) | 0x01) & 0xff;
+			if (cycle.casWeak(old, c)) {
+				return c;
+			}
+		}
 	}
 
 	/**
@@ -72,6 +84,22 @@ public:
 		(cast(GCState*) &this).scanRootsImpl(scan);
 	}
 
+	/**
+	 * Tidy up any root structure. This should be called periodically to
+	 * ensure the roots structure does not become too large. Should not be
+	 * called during collection.
+	 */
+	void minimizeRoots() shared {
+		import d.gc.thread;
+		enterBusyState();
+		scope(exit) exitBusyState();
+
+		mutex.lock();
+		scope(exit) mutex.unlock();
+
+		(cast(GCState*) &this).minimizeRootsImpl();
+	}
+
 private:
 	void addRootsImpl(const void[] range) {
 		assert(mutex.isHeld(), "Mutex not held!");
@@ -80,7 +108,7 @@ private:
 		auto index = roots.length;
 		auto length = index + 1;
 
-		// We realloc everytime. It doesn't really matter at this point.
+		// We realloc every time. It doesn't really matter at this point.
 		import d.gc.tcache;
 		ptr = threadCache.realloc(ptr, length * void*[].sizeof, true);
 		roots = (cast(const(void*)[]*) ptr)[0 .. length];
@@ -114,12 +142,21 @@ private:
 			roots[i] = roots[length];
 			roots[length] = [];
 
-			import d.gc.tcache;
-			auto newRoots =
-				threadCache.realloc(roots.ptr, length * void*[].sizeof, true);
-			roots = (cast(const(void*)[]*) newRoots)[0 .. length];
+			roots = roots[0 .. length];
+
 			break;
 		}
+	}
+
+	void minimizeRootsImpl() {
+		assert(mutex.isHeld(), "Mutex not held!");
+
+		auto length = roots.length;
+
+		import d.gc.tcache;
+		auto newRoots =
+			threadCache.realloc(roots.ptr, length * void*[].sizeof, true);
+		roots = (cast(const(void*)[]*) newRoots)[0 .. length];
 	}
 
 	void scanRootsImpl(ScanDg scan) {

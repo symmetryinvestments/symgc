@@ -36,11 +36,89 @@ struct Bin {
 		       "Invalid arena or sizeClass!");
 		assert(slotSize == binInfos[sizeClass].slotSize, "Invalid slot size!");
 
-		mutex.lock();
-		scope(exit) mutex.unlock();
+		assert(bottom < top, "Invalid stack boundaries!");
+		assert((top - bottom) < uint.max, "Invalid stack size!");
 
-		return (cast(Bin*) &this)
-			.batchAllocateImpl(filler, emap, sizeClass, top, bottom, slotSize);
+		/**
+		 * When we run out of slab with free space, we allocate a fresh slab.
+		 * However, while we do so, another thread may have returned slabs to
+		 * the bin, so we might end up not using our fresh slab.
+		 */
+		Extent* freshSlab = null;
+
+		/**
+		 * Allocating fresh slab might fail, for instance if the system
+		 * runs out of memory. Before we attempt to allocate one, we make
+		 * sure we made progress since the last attempt.
+		 */
+		bool progressed = true;
+
+		/**
+		 * We insert from the bottom up!
+		 */
+		auto insert = bottom;
+
+		Refill: {
+			mutex.lock();
+			scope(exit) mutex.unlock();
+
+			auto slabs = &(cast(Bin*) &this).slabs;
+
+			while (insert !is top) {
+				assert(insert < top, "Insert out of bounds!");
+
+				auto e = slabs.top;
+				if (unlikely(e is null)) {
+					if (freshSlab !is null) {
+						// We have a fresh slab, use it!
+						slabs.insert(freshSlab);
+						freshSlab = null;
+						continue;
+					}
+
+					if (progressed) {
+						// Let's go fetch a new fresh slab.
+						goto FreshSlab;
+					}
+
+					break;
+				}
+
+				assert(e.nfree > 0);
+				uint nfill = (top - insert) & uint.max;
+				insert = e.batchAllocate(insert, nfill, slotSize);
+				assert(bottom <= insert && insert <= top);
+
+				progressed = true;
+
+				// If the slab is not full, we are done.
+				if (e.nfree > 0) {
+					break;
+				}
+
+				// The slab is full, remove from the heap.
+				slabs.remove(e);
+				continue;
+			}
+		}
+
+		if (freshSlab !is null) {
+			filler.freeExtent(emap, freshSlab);
+		}
+
+		return insert;
+
+	FreshSlab:
+		assert(insert !is top);
+		assert(freshSlab is null);
+		assert(progressed);
+
+		freshSlab = filler.allocSlab(emap, sizeClass);
+		auto nslots = binInfos[sizeClass].nslots;
+		assert(freshSlab is null || freshSlab.nfree == nslots);
+
+		progressed = false;
+		goto Refill;
 	}
 
 	uint batchFree(const(void*)[] worklist, PageDescriptor* pds,
@@ -53,78 +131,6 @@ struct Bin {
 	}
 
 private:
-	void** batchAllocateImpl(
-		shared(PageFiller)* filler,
-		ref CachedExtentMap emap,
-		ubyte sizeClass,
-		void** top,
-		void** bottom,
-		size_t slotSize,
-	) {
-		// FIXME: in contract.
-		assert(mutex.isHeld(), "Mutex not held!");
-		assert(bottom < top, "Invalid stack boundaries!");
-		assert((top - bottom) < uint.max, "Invalid stack size!");
-
-		auto insert = bottom;
-		while (insert !is top) {
-			assert(insert < top, "Insert out of bounds!");
-
-			auto e = getSlab(filler, emap, sizeClass);
-			if (unlikely(e is null)) {
-				break;
-			}
-
-			assert(e.nfree > 0);
-			uint nfill = (top - insert) & uint.max;
-			insert = e.batchAllocate(insert, nfill, slotSize);
-			assert(bottom <= insert && insert <= top);
-
-			// If the slab is not full, we are done.
-			if (e.nfree > 0) {
-				break;
-			}
-
-			// The slab is full, remove from the heap.
-			slabs.remove(e);
-		}
-
-		/**
-		 * Note: If we are worried about security, we might want to shuffle
-		 *       our allocations around. This makes the uses of techniques
-		 *       like Heap feng Shui difficult.
-		 *       We do not think it is worth the complication and performance
-		 *       hit in the general case, but something we might want to add
-		 *       in the future for security sensitive applications.
-		 * 
-		 * http://www.phreedom.org/research/heap-feng-shui/heap-feng-shui.html
-		 */
-
-		// We filled the whole stack, done.
-		if (likely(insert is top)) {
-			return bottom;
-		}
-
-		/**
-		 * We could simplify this code by inserting from top to bottom,
-		 * in order to avoid moving all the elements when the stack has not
-		 * been filled.
-		 * 
-		 * However, because we allocate from the best slab to the worse one,
-		 * this would result in a stack that allocate from the worse slab
-		 * before the best ones.
-		 * 
-		 * So we allocate from the bottom to the top, and move the whole stack
-		 * if we did not quite reach the top.
-		 */
-		while (insert > bottom) {
-			*(--top) = *(--insert);
-		}
-
-		assert(bottom <= top);
-		return top;
-	}
-
 	uint batchFreeImpl(const(void*)[] worklist, PageDescriptor* pds,
 	                   Extent** dallocSlabs, ref uint ndalloc) {
 		// FIXME: in contract.
@@ -177,59 +183,6 @@ private:
 		}
 
 		return ndeferred;
-	}
-
-	auto getSlab(shared(PageFiller)* filler, ref CachedExtentMap emap,
-	             ubyte sizeClass) {
-		// FIXME: in contract.
-		assert(mutex.isHeld(), "Mutex not held!");
-
-		auto slab = slabs.top;
-		if (slab !is null) {
-			return slab;
-		}
-
-		{
-			// Release the lock while we allocate a slab.
-			mutex.unlock();
-			scope(exit) mutex.lock();
-
-			// We don't have a suitable slab, so allocate one.
-			slab = filler.allocSlab(emap, sizeClass);
-		}
-
-		if (unlikely(slab is null)) {
-			// Another thread might have been successful
-			// while we did not hold the lock.
-			return slabs.top;
-		}
-
-		// We may have allocated the slab we need when the lock was released.
-		if (likely(slabs.top is null)) {
-			slabs.insert(slab);
-			return slab;
-		}
-
-		// We are about to release the freshly allocated slab.
-		// We do not want another thread stealing the slab we intend
-		// to use from under our feets, so we keep it around.
-		auto current = slabs.pop();
-
-		assert(slab !is current);
-		assert(slab.nfree == binInfos[sizeClass].nslots);
-
-		{
-			// Release the lock while we release the slab.
-			mutex.unlock();
-			scope(exit) mutex.lock();
-
-			filler.freeExtent(emap, slab);
-		}
-
-		// Now we put it back, which ensure we have at least one
-		// slab available that we can return.
-		slabs.insert(current);
-		return slabs.top;
 	}
 
 /**

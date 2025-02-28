@@ -483,6 +483,77 @@ public:
 		return *_gcMetadata.outlineBitmap;
 	}
 
+	bool markSparseSlot(ubyte gcCycle, uint index) {
+		assert(extentClass.sparse, "size class not sparse!");
+		assert(!isLarge(), "size class large!");
+		auto bit = 0x100 << index;
+
+		auto old = gcWord.load();
+		while ((old & 0xff) != gcCycle) {
+			if (gcWord.casWeak(old, gcCycle | bit)) {
+				return true;
+			}
+		}
+
+		if (old & bit) {
+			return false;
+		}
+
+		old = gcWord.fetchOr(bit);
+		return (old & bit) == 0;
+	}
+
+	bool markLarge(ubyte gcCycle) {
+		assert(isLarge(), "size class not large!");
+		auto old = gcWord.load();
+		while (true) {
+			if (old == gcCycle) {
+				return false;
+			}
+
+			if (gcWord.casWeak(old, gcCycle)) {
+				return true;
+			}
+		}
+	}
+
+	bool markDenseSlot(uint index) {
+		assert(extentClass.dense, "size class not dense!");
+		if (extentClass.supportsInlineMarking) {
+			return !slabMetadataMarks.setBitAtomic(index);
+		}
+
+		auto bmp = &outlineMarks;
+		return bmp !is null && !bmp.setBitAtomic(index);
+	}
+
+	ulong getMarksSparse(ubyte gcCycle) {
+		assert(extentClass.sparse, "Size class not sparse!");
+		assert(!isLarge(), "Size class large!");
+
+		auto w = gcWord.load();
+		auto markCycle = w & 0xff;
+		if (markCycle == gcCycle) {
+			return w >> 8;
+		}
+
+		return 0;
+	}
+
+	bool isMarkedLarge(ubyte gcCycle) {
+		assert(isLarge(), "Size class not large!");
+
+		return gcCycle == gcWord.load();
+	}
+
+	ulong* getMarksDenseAndClearOutlines() {
+		return getMarksDenseImpl!true();
+	}
+
+	ulong* getMarksDense() {
+		return getMarksDenseImpl!false();
+	}
+
 	@property
 	ref shared(Atomic!ulong) gcWord() {
 		assert(extentClass.sparse, "size class not sparse!");
@@ -517,6 +588,22 @@ public:
 	void setFinalizer(Finalizer finalizer) {
 		assert(isLarge(), "Cannot set finalizer on a slab alloc!");
 		_metadata.largeData.finalizer = finalizer;
+	}
+
+private:
+
+	ulong* getMarksDenseImpl(bool clearOutlines)() {
+		assert(extentClass.dense, "Size class not dense!");
+		if (extentClass.supportsInlineMarking) {
+			return cast(ulong*) &slabMetadataMarks;
+		}
+
+		auto bmp = outlineMarksBuffer;
+		if (clearOutlines) {
+			outlineMarksBuffer = null;
+		}
+
+		return bmp;
 	}
 }
 

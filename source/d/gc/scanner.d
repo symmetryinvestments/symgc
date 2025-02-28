@@ -6,6 +6,7 @@ import sdc.intrinsics;
 import d.gc.emap;
 import d.gc.hooks;
 import d.gc.range;
+import d.gc.slab;
 import d.gc.spec;
 import d.gc.util;
 
@@ -36,6 +37,7 @@ public:
 		auto nthreads = getCoreCount();
 		assert(nthreads >= 1, "Expected at least one thread!");
 
+		// nthreads = 1;
 		this(nthreads, gcCycle, managedAddressSpace);
 	}
 
@@ -66,7 +68,8 @@ public:
 
 		// First thing, start the worker threads, so they can do work ASAP.
 		foreach (ref tid; threads) {
-			pthread_create(&tid, null, markThreadEntry, cast(void*) &this);
+			import d.rt.trampoline;
+			createGCThread(&tid, null, markThreadEntry, cast(void*) &this);
 		}
 
 		// Scan the roots.
@@ -240,18 +243,34 @@ private:
 
 private:
 
-struct Worker {
-	enum WorkListCapacity = 16;
+struct LastDenseSlabCache {
+	AddressRange slab;
+	PageDescriptor pageDescriptor;
+	BinInfo bin;
 
+	this(AddressRange slab, PageDescriptor pageDescriptor, BinInfo bin) {
+		this.slab = slab;
+		this.pageDescriptor = pageDescriptor;
+		this.bin = bin;
+	}
+}
+
+struct Worker {
 private:
 	shared(Scanner)* scanner;
-
-	uint cursor;
-	WorkItem[WorkListCapacity] worklist;
 
 	// TODO: Use a different caching layer that
 	//       can cache negative results.
 	CachedExtentMap emap;
+
+	/**
+	 * Cold elements that benefit from being kept alive
+	 * across scan calls.
+	 */
+	AddressRange managedAddressSpace;
+	ubyte gcCycle;
+
+	LastDenseSlabCache ldsCache;
 
 public:
 	this(shared(Scanner)* scanner) {
@@ -259,6 +278,9 @@ public:
 
 		import d.gc.tcache;
 		this.emap = threadCache.emap;
+
+		this.managedAddressSpace = scanner.managedAddressSpace;
+		this.gcCycle = scanner.gcCycle;
 	}
 
 	void scan(const(void*)[] range) {
@@ -268,14 +290,28 @@ public:
 	}
 
 	void scan(WorkItem item) {
-		auto ms = scanner.managedAddressSpace;
-		auto cycle = scanner.gcCycle;
+		scanImpl!true(item, ldsCache);
+	}
 
-		AddressRange lastDenseSlab;
-		PageDescriptor lastDenseSlabPageDescriptor;
+	void scanBreadthFirst(WorkItem item, LastDenseSlabCache cache) {
+		scanImpl!false(item, cache);
+	}
 
-		import d.gc.slab;
-		BinInfo lastDenseBin;
+	void scanImpl(bool DepthFirst)(WorkItem item, LastDenseSlabCache cache) {
+		auto ms = managedAddressSpace;
+
+		scope(success) {
+			if (DepthFirst) {
+				ldsCache = cache;
+			}
+		}
+
+		// Depth first doesn't really need a worklist,
+		// but this makes sharing code easier.
+		enum WorkListCapacity = DepthFirst ? 1 : 16;
+
+		uint cursor;
+		WorkItem[WorkListCapacity] worklist;
 
 		while (true) {
 			auto range = item.range;
@@ -289,14 +325,17 @@ public:
 					continue;
 				}
 
-				if (lastDenseSlab.contains(ptr)) {
+				if (cache.slab.contains(ptr)) {
 				MarkDense:
-					auto base = lastDenseSlab.ptr;
+					auto base = cache.slab.ptr;
 					auto offset = ptr - base;
-					auto index = lastDenseBin.computeIndex(offset);
 
-					auto pd = lastDenseSlabPageDescriptor;
-					auto slotSize = lastDenseBin.slotSize;
+					auto ldb = cache.bin;
+					auto index = ldb.computeIndex(offset);
+
+					auto pd = cache.pageDescriptor;
+					assert(pd.extent !is null);
+					assert(pd.extent.contains(ptr));
 
 					if (!markDense(pd, index)) {
 						continue;
@@ -306,17 +345,18 @@ public:
 						continue;
 					}
 
+					auto slotSize = ldb.slotSize;
 					auto i = WorkItem(base + index * slotSize, slotSize);
+					if (DepthFirst) {
+						scanBreadthFirst(i, cache);
+						continue;
+					}
+
 					if (likely(cursor < WorkListCapacity)) {
 						worklist[cursor++] = i;
 						continue;
 					}
 
-					/**
-					 * We want to make sure that no matter what, this worker processes
-					 * the WorkItem it is provided directly. Everything else in the
-					 * worklist can be sent to other threads.
-					 */
 					scanner.addToWorkList(worklist[0 .. WorkListCapacity]);
 
 					cursor = 1;
@@ -335,22 +375,26 @@ public:
 
 				auto ec = pd.extentClass;
 				if (ec.dense) {
-					lastDenseSlabPageDescriptor = pd;
-					lastDenseBin = binInfos[ec.sizeClass];
+					assert(e !is cache.pageDescriptor.extent);
 
-					lastDenseSlab =
-						AddressRange(aptr - pd.index * PageSize,
-						             lastDenseBin.npages * PointerInPage);
+					auto ldb = binInfos[ec.sizeClass];
+					auto lds = AddressRange(aptr - pd.index * PageSize,
+					                        ldb.npages * PageSize);
 
+					cache = LastDenseSlabCache(lds, pd, ldb);
 					goto MarkDense;
 				}
 
 				if (ec.isLarge()) {
-					if (!markLarge(pd, cycle)) {
+					if (!markLarge(pd, gcCycle)) {
 						continue;
 					}
 
+					/*
 					auto capacity = e.usedCapacity;
+					/*/
+					auto capacity = e.size;
+					// */
 					if (!pd.containsPointers || capacity < PointerSize) {
 						continue;
 					}
@@ -359,7 +403,7 @@ public:
 
 					// Make sure we do not starve ourselves. If we do not have
 					// work in advance, then just keep some of it for ourselves.
-					if (cursor == 0) {
+					if (DepthFirst && cursor == 0) {
 						worklist[cursor++] = WorkItem.extractFromRange(range);
 					}
 
@@ -367,9 +411,8 @@ public:
 					continue;
 				}
 
-				import d.gc.slab;
 				auto se = SlabEntry(pd, ptr);
-				if (!markSparse(pd, se.index, cycle)) {
+				if (!markSparse(pd, se.index, gcCycle)) {
 					continue;
 				}
 
@@ -380,7 +423,7 @@ public:
 				// Make sure we do not starve ourselves. If we do not have
 				// work in advance, then just keep some of it for ourselves.
 				auto i = WorkItem(se.computeRange());
-				if (cursor == 0) {
+				if (DepthFirst && cursor == 0) {
 					worklist[cursor++] = i;
 				} else {
 					scanner.addToWorkList(i);
@@ -413,51 +456,17 @@ private:
 		}
 
 		auto ec = pd.extentClass;
-		if (ec.supportsInlineMarking) {
-			if (e.slabMetadataMarks.setBitAtomic(index)) {
-				return false;
-			}
-		} else {
-			auto bmp = &e.outlineMarks;
-			if (bmp is null || bmp.setBitAtomic(index)) {
-				return false;
-			}
-		}
-
-		return true;
+		return e.markDenseSlot(index);
 	}
 
 	static bool markSparse(PageDescriptor pd, uint index, ubyte cycle) {
-		auto bit = 0x100 << index;
-
 		auto e = pd.extent;
-		auto old = e.gcWord.load();
-		while ((old & 0xff) != cycle) {
-			if (e.gcWord.casWeak(old, cycle | bit)) {
-				return true;
-			}
-		}
-
-		if (old & bit) {
-			return false;
-		}
-
-		old = e.gcWord.fetchOr(bit);
-		return (old & bit) == 0;
+		return e.markSparseSlot(cycle, index);
 	}
 
 	static bool markLarge(PageDescriptor pd, ubyte cycle) {
 		auto e = pd.extent;
-		auto old = e.gcWord.load();
-		while (true) {
-			if (old == cycle) {
-				return false;
-			}
-
-			if (e.gcWord.casWeak(old, cycle)) {
-				return true;
-			}
-		}
+		return e.markLarge(cycle);
 	}
 }
 
@@ -548,5 +557,33 @@ public:
 			auto ir = WorkItem(range);
 			assert(item.payload == ir.payload);
 		}
+	}
+
+	enum WorkUnit = WorkItem.WorkUnit;
+	enum MaxUnit = 3 * WorkUnit / 2;
+
+	foreach (size; 1 .. MaxUnit + 1) {
+		auto range = (cast(const(void*)*) ptr)[0 .. size];
+		auto w = WorkItem.extractFromRange(range);
+		assert(w.ptr is ptr);
+		assert(w.length is size * PointerSize);
+
+		assert(range.length == 0);
+	}
+
+	foreach (size; MaxUnit + 1 .. MaxUnit + WorkUnit + 1) {
+		auto range = (cast(const(void*)*) ptr)[0 .. size];
+		auto w = WorkItem.extractFromRange(range);
+
+		assert(w.ptr is ptr);
+		assert(w.length is WorkUnit * PointerSize);
+
+		assert(range.length == size - WorkUnit);
+
+		w = WorkItem.extractFromRange(range);
+		assert(w.ptr is ptr + WorkUnit * PointerSize);
+		assert(w.length is (size - WorkUnit) * PointerSize);
+
+		assert(range.length == 0);
 	}
 }

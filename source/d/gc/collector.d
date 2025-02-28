@@ -72,9 +72,17 @@ private:
 		 * 
 		 * Alternatively, we could make sure the slots are marked.
 		 */
-		threadCache.flushCache();
+		threadCache.flush();
 
 		collect(gcCycle);
+
+		/**
+		 * Removing roots cannot realloc while inside a finalizer,
+		 * because that could cause a deadlock. So we must periodically
+		 * minimize the roots array, never when inside the collect
+		 * phase.
+		 */
+		gState.minimizeRoots();
 	}
 
 	void prepareGCCycle() {
@@ -96,6 +104,18 @@ private:
 			}
 		}
 	}
+}
+
+void collectorPrepareForFork() {
+	gCollectorState.mutex.lock();
+}
+
+void collectorPostForkParent() {
+	gCollectorState.mutex.unlock();
+}
+
+void collectorPostForkChild() {
+	gCollectorState.mutex.__clear();
 }
 
 private:
