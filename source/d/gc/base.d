@@ -1,5 +1,4 @@
 module d.gc.base;
-version(none):
 
 import d.gc.spec;
 import d.gc.util;
@@ -400,17 +399,17 @@ struct Block {
 		return (v % BlockSize) / ExtentSize;
 	}
 
-	static size_t indexInBlock(GenerationPointer ptr) {
+	static size_t indexInBlockGP(GenerationPointer ptr) {
 		return indexInBlock(ptr.address);
 	}
 
 	// Almost fill in a block of metadata.
 	auto prev = base.allocSlot();
-	assert(indexInBlock(prev) == 1);
+	assert(indexInBlockGP(prev) == 1);
 
 	foreach (i; 2 .. 16382) {
 		auto current = base.allocSlot();
-		assert(indexInBlock(current) == i);
+		assert(indexInBlockGP(current) == i);
 		assert(countBlocks(base) == 1);
 		assert(prev.generation == current.generation);
 
@@ -428,7 +427,7 @@ struct Block {
 	assert(countBlocks(base) == 1);
 
 	auto current = base.allocSlot();
-	assert(indexInBlock(current) == 16383);
+	assert(indexInBlockGP(current) == 16383);
 	assert(countBlocks(base) == 1);
 	assert(prev.generation == current.generation);
 
@@ -439,7 +438,7 @@ struct Block {
 	}
 
 	current = base.allocSlot();
-	assert(indexInBlock(current) == 1);
+	assert(indexInBlockGP(current) == 1);
 	assert(countBlocks(base) == 2);
 	assert(prev.generation + 1 == current.generation);
 }
