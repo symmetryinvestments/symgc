@@ -1,10 +1,14 @@
 module d.gc.memmap;
-version(none):
 
 import d.gc.spec;
 import d.gc.util;
 
-import sys.mman;
+version(linux) {
+    import core.sys.linux.sys.mman;
+
+    // not included in druntime for some reason
+    enum MADV_FREE = 8;
+}
 
 void* pages_map(void* addr, size_t size, size_t alignment) {
 	assert(alignment >= PageSize && isPow2(alignment), "Invalid alignment!");
@@ -70,12 +74,12 @@ void pages_unmap(void* addr, size_t size) {
 }
 
 void pages_purge(void* addr, size_t size) {
-	auto ret = madvise(addr, size, Madv.DontNeed);
+	auto ret = madvise(addr, size, MADV_DONTNEED);
 	assert(ret == 0, "madvise failed!");
 }
 
 void pages_purge_lazy(void* addr, size_t size) {
-	auto ret = madvise(addr, size, Madv.Free);
+	auto ret = madvise(addr, size, MADV_FREE);
 	assert(ret == 0, "madvise failed!");
 }
 
@@ -83,24 +87,25 @@ void pages_zero(void* addr, size_t size) {
 	if (size >= PurgePageThresoldSize) {
 		pages_purge(addr, size);
 	} else {
+        import core.stdc.string;
 		memset(addr, 0, size);
 	}
 }
 
 void pages_hugify(void* addr, size_t size) {
-	auto ret = madvise(addr, size, Madv.HugePage);
+	auto ret = madvise(addr, size, MADV_HUGEPAGE);
 	assert(ret == 0, "madvise failed!");
 }
 
 void pages_dehugify(void* addr, size_t size) {
-	auto ret = madvise(addr, size, Madv.NoHugePage);
+	auto ret = madvise(addr, size, MADV_NOHUGEPAGE);
 	assert(ret == 0, "madvise failed!");
 }
 
 private:
 
 enum PagesFDTag = -1;
-enum MMapFlags = Map.Private | Map.Anonymous;
+enum MMapFlags = MAP_PRIVATE | MAP_ANONYMOUS;
 
 void* os_pages_map(void* addr, size_t size, size_t alignment) {
 	assert(alignment >= PageSize && isPow2(alignment), "Invalid alignment!");
@@ -108,7 +113,7 @@ void* os_pages_map(void* addr, size_t size, size_t alignment) {
 	assert(size > 0 && isAligned(size, PageSize), "Invalid size!");
 
 	auto ret =
-		mmap(addr, size, Prot.Read | Prot.Write, MMapFlags, PagesFDTag, 0);
+		mmap(addr, size, PROT_READ | PROT_WRITE, MMapFlags, PagesFDTag, 0);
 	assert(ret !is null);
 
 	auto MAP_FAILED = cast(void*) -1L;
@@ -154,7 +159,7 @@ void* os_pages_map(void* addr, size_t size, size_t alignment) {
 		}
 	}
 
-	foreach (i; 0 .. allocs.length) {
-		pages_unmap(allocs[i].ptr, allocs[i].length);
+	foreach (j; 0 .. allocs.length) {
+		pages_unmap(allocs[j].ptr, allocs[j].length);
 	}
 }
