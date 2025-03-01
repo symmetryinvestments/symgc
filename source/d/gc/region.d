@@ -1,5 +1,4 @@
 module d.gc.region;
-version(none):
 
 import d.gc.allocclass;
 import d.gc.base;
@@ -10,14 +9,15 @@ import d.gc.rbtree;
 import d.gc.spec;
 import d.gc.util;
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
+import core.builtins;
 
 alias ClassTree = RBTree!(Region, classAddrRegionCmp, "rbClass");
 alias RangeTree = RBTree!(Region, addrRangeRegionCmp, "rbRange");
 
-alias ClassNode = rbtree.Node!(Region, "rbClass");
-alias RangeNode = rbtree.Node!(Region, "rbRange");
-alias PHNode = heap.Node!Region;
+alias ClassNode = d.gc.rbtree.Node!(Region, "rbClass");
+alias RangeNode = d.gc.rbtree.Node!(Region, "rbRange");
+alias PHNode = d.gc.heap.Node!Region;
 
 // Reserve memory in blocks of 1GB.
 enum RefillSize = 1024 * 1024 * 1024;
@@ -332,11 +332,11 @@ private:
 	assert(regionAllocator.acquiredBlocks == 5);
 
 	{
-		auto r = ra.regionsByClass.extractAny();
-		scope(exit) ra.regionsByClass.insert(r);
+		auto r2 = ra.regionsByClass.extractAny();
+		scope(exit) ra.regionsByClass.insert(r2);
 
-		assert(r.address is addr0 + 5 * BlockSize);
-		assert(r.size == RefillSize - 5 * BlockSize);
+		assert(r2.address is addr0 + 5 * BlockSize);
+		assert(r2.size == RefillSize - 5 * BlockSize);
 	}
 
 	foreach (i; 0 .. 5) {
@@ -346,11 +346,11 @@ private:
 	}
 
 	{
-		auto r = ra.regionsByClass.extractAny();
-		scope(exit) ra.regionsByClass.insert(r);
+		auto r2 = ra.regionsByClass.extractAny();
+		scope(exit) ra.regionsByClass.insert(r2);
 
-		assert(r.address is addr0);
-		assert(r.size == RefillSize);
+		assert(r2.address is addr0);
+		assert(r2.size == RefillSize);
 	}
 }
 
