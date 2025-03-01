@@ -1,5 +1,4 @@
 module d.gc.heap;
-version(none):
 
 /**
  * This is a Pairing Heap similar to jemalloc's.
@@ -149,7 +148,7 @@ public:
 			return;
 		}
 
-		import sdc.intrinsics;
+		import sdcgc.intrinsics;
 		uint nmerge = countTrailingZeros(auxcount);
 		bool done = false;
 		for (uint i = 0; i < nmerge && !done; i++) {
@@ -577,7 +576,7 @@ struct Link(N, string NodeName) {
 		heap.insert(n);
 		heap.checkIntegrity();
 
-		import sdc.intrinsics;
+		import sdcgc.intrinsics;
 		assert(computeAuxLength() == popCount(i));
 	}
 
