@@ -1,5 +1,4 @@
 module d.gc.range;
-version(none):
 
 import d.gc.util;
 import d.gc.spec;
