@@ -1,5 +1,4 @@
 module d.gc.cpu;
-version(none):
 
 auto getCoreCount() {
 	auto coreCountPtr = cast(uint*) &gCoreCount;
@@ -14,13 +13,13 @@ private:
 shared uint gCoreCount;
 
 auto computeCoreCount() {
-	import sys.posix.sched;
+	import core.sys.linux.sched;
 	cpu_set_t set;
 	sched_getaffinity(0, cpu_set_t.sizeof, &set);
 	return CPU_COUNT(&set);
 }
 
 @"getCoreCount" unittest {
-	import sys.linux.sysinfo;
+	import core.sys.linux.sys.sysinfo;
 	assert(getCoreCount() == get_nprocs());
 }
