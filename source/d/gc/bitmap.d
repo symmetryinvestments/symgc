@@ -1,9 +1,8 @@
 module d.gc.bitmap;
-version(none):
 
 import d.gc.util;
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
 
 struct Bitmap(uint N) {
 private:
@@ -152,7 +151,7 @@ public:
 			current = bits[i--] ^ flip;
 		}
 
-		int clz = countLeadingZeros(current);
+		int clz = cast(int)countLeadingZeros(current);
 		return (i + 2) * NimbleSize - clz - 1;
 	}
 
@@ -217,9 +216,9 @@ public:
 		}
 
 		static if (V) {
-			old = fetchOr(&bits[i], b);
+			old = atomicFetchOp!"|"(bits[i], b);
 		} else {
-			old = fetchAnd(&bits[i], ~b);
+			old = atomicFetchOp!"&"(bits[i], ~b);
 		}
 
 		return (old & b) != 0;

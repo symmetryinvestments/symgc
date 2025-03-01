@@ -1,6 +1,7 @@
 module d.sync.atomic;
 
 import drta = core.atomic;
+import sdcgc.intrinsics;
 
 enum MemoryOrder : drta.MemoryOrder {
 	Relaxed = drta.MemoryOrder.raw,
@@ -38,17 +39,17 @@ public:
 		return drta.atomicFetchSub(value, n);
 	}
 
-	/*T fetchAnd(T n, MemoryOrder order = MemoryOrder.SeqCst) shared {
-		return drta.atomicOp!"&="(value, n);
+	T fetchAnd(T n, MemoryOrder order = MemoryOrder.SeqCst) shared {
+        return atomicFetchOp!"&"(value, n);
 	}
 
 	T fetchOr(T n, MemoryOrder order = MemoryOrder.SeqCst) shared {
-		return drta.atomicOp!"|="(value, n);
+        return atomicFetchOp!"|"(value, n);
 	}
 
 	T fetchXor(T n, MemoryOrder order = MemoryOrder.SeqCst) shared {
-		return drta.atomicOp!"^="(value, n);
-	}*/
+        return atomicFetchOp!"^"(value, n);
+	}
 
 	bool cas(MemoryOrder order = MemoryOrder.SeqCst)(ref T expected, T desired) shared {
 		return drta.cas(&value, &expected, desired);
