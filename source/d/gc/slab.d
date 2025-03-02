@@ -1,7 +1,9 @@
 module d.gc.slab;
-//import d.gc.emap;
-//import d.gc.extent;
-//import d.gc.size;
+
+// NOTE: The following code is copied from below, so other modules that need
+// this data can compile. This is an independent piece, and may be a candidate
+// to split into its own module. LOnce the version(none) is removed below, this
+// can all be deleted.
 import d.gc.spec;
 import d.gc.util;
 
@@ -76,6 +78,8 @@ immutable BinInfo[BinCount] binInfos = getBinInfos();
 }
 
 enum InvalidBinID = 0xff;
+
+// END COPIED CODE
 
 version(none):
 
