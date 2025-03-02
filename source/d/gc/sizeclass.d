@@ -1,5 +1,4 @@
 module d.gc.sizeclass;
-version(none):
 
 import d.gc.spec;
 import d.gc.util;
