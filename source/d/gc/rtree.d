@@ -1,12 +1,12 @@
 module d.gc.rtree;
-version(none):
 
 import d.gc.base;
 import d.gc.spec;
 
 import d.sync.atomic;
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
+import core.builtins;
 
 static assert(LgAddressSpace <= 48, "Address space too large!");
 
@@ -245,7 +245,7 @@ private:
 		}
 
 		leaves = cast(Leaves) base.reserveAddressSpace(typeof(*leaves).sizeof);
-		nodes[key0].data.store(cast(size_t) leaves, MemoryOrder.Relaxed);
+		nodes[key0].data.store!(MemoryOrder.Relaxed)(cast(size_t) leaves);
 		return leaves;
 	}
 }
@@ -332,6 +332,7 @@ private:
 		}
 
 		// We had data in l1, push it in l2.
+        import core.stdc.string : memmove;
 		memmove(&l2[1], l2.ptr, CacheEntry.sizeof * (L2Size - 1));
 		l2[0] = e;
 	}
