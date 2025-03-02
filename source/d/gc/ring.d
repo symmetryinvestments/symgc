@@ -1,5 +1,4 @@
 module d.gc.ring;
-version(none):
 
 struct Node(N, string NodeName = "rnode") {
 private:
