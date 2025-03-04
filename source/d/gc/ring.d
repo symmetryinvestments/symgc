@@ -91,7 +91,7 @@ public:
 private:
 
 ref Node!(N, NodeName) nodeData(string NodeName, N)(N* n) {
-	mixin("return n." ~ NodeName ~ ";");
+	return __traits(getMember, *n, NodeName);
 }
 
 struct Link(N, string NodeName) {

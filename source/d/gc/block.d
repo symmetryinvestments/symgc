@@ -1,5 +1,4 @@
 module d.gc.block;
-version(none):
 
 import d.gc.allocclass;
 import d.gc.base;
@@ -8,10 +7,11 @@ import d.gc.ring;
 import d.gc.spec;
 import d.gc.util;
 
-alias PHNode = heap.Node!BlockDescriptor;
-alias RNode = ring.Node!BlockDescriptor;
+alias PHNode = d.gc.heap.Node!BlockDescriptor;
+alias RNode = d.gc.ring.Node!BlockDescriptor;
 
 alias AllBlockRing = Ring!(BlockDescriptor, "allrnode");
+alias AllBlockRingNode = d.gc.ring.Node!(BlockDescriptor, "allrnode");
 
 /**
  * Each BlockDescriptor manages a 2MB system's huge page.
@@ -88,7 +88,7 @@ private:
 
 	Links _links;
 
-	AllBlockRing.Node allrnode;
+	AllBlockRingNode allrnode;
 
 	uint usedCount;
 	uint dirtyCount;
@@ -336,8 +336,8 @@ public:
 		}
 
 		auto toPurge = dirtyPages;
-		foreach (i, ref n; toPurge.rawContent) {
-			n &= ~allocatedPages.rawContent[i];
+		foreach (i, ref bits; toPurge.rawContent) {
+			bits &= ~allocatedPages.rawContent[i];
 		}
 
 		auto base = address;
