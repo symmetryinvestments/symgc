@@ -1,5 +1,4 @@
 module d.gc.emap;
-version(none):
 
 import d.gc.base;
 import d.gc.extent;
@@ -7,7 +6,7 @@ import d.gc.rtree;
 import d.gc.spec;
 import d.gc.util;
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
 
 shared ExtentMap gExtentMap;
 

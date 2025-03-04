@@ -46,7 +46,7 @@ private:
 	alias Cache = RTreeCache!T;
 	alias Leaves = shared(Leaf[Level1Size])*;
 
-	struct Leaf {
+	public struct Leaf {
 	private:
 		Atomic!ulong data;
 

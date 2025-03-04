@@ -1,4 +1,14 @@
 module d.gc.arena;
+
+// NOTE: The following code is a shim to allow emap.d to build and test. Once
+// arena is enabled, this should be removed.
+
+struct Arena {
+	static getInitialized(size_t idx) {
+		return Arena();
+	}
+}
+
 version(none):
 
 import d.gc.emap;
