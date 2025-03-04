@@ -125,16 +125,16 @@ private:
 
 		/**
 		 * Scan the stack and TLS.
-		 * 
+		 *
 		 * It may seems counter intuitive that we do so for worker threads
 		 * as well, but it turns out to be necessary. NPTL caches resources
 		 * necessary to start a thread after a thread exits, to be able to
 		 * restart new ones quickly and cheaply.
-		 * 
+		 *
 		 * Because we start and stop threads during the mark phase, we are
 		 * at risk of missing pointers allocated for thread management resources
 		 * and corrupting the internal of the standard C library.
-		 * 
+		 *
 		 * This is NOT good! So we scan here to make sure we don't miss anything.
 		 */
 		import d.gc.thread;
@@ -446,7 +446,7 @@ private:
 
 		/**
 		 * /!\ This is not thread safe.
-		 * 
+		 *
 		 * In the context of concurrent scans, slots might be
 		 * allocated/deallocated from the slab while we scan.
 		 * It is unclear how to handle this at this time.

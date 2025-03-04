@@ -30,27 +30,27 @@ private:
 	 *  - c: The allocation class associated with the longest free range.
 	 *  - a: The address of the block itself.
 	 *  - d: indicates if the block is dense.
-	 * 
+	 *
 	 * 63    56 55    48 47    40 39    32 31    24 23    16 15     8 7      0
 	 * ......ff ffffffff ssssssss ss.ccccc aaaaaaaa aaaaaaaa aaaaaaaa aaa....d
-	 * 
+	 *
 	 * We want that bitfield to be usable as a discriminant to prioritize
 	 * from which block we want to allocate.
-	 * 
+	 *
 	 *  1. Reduce fragmentation.
 	 *     We therefore try to select the block with the shortest free range
 	 *     possible, so we avoid unnecessarily breaking large free ranges.
-	 * 
+	 *
 	 *  2. Use block which already host many allocations.
 	 *     We do so in order to maximize our chances to be able to free blocks.
-	 * 
+	 *
 	 *     This tends to work better in practice than counting the number
 	 *     of allocated pages or other metrics. For details, please see the
 	 *     Temeraire paper: https://research.google/pubs/pub50370/
-	 * 
+	 *
 	 *     The intuition is that the more allocations live on a block,
 	 *     the more likely it is that one of them is going to be long lived.
-	 * 
+	 *
 	 *  3. Everything else being equal, we default to lowest address.
 	 */
 	ulong bits = ulong(PagesInBlock) << LongestFreeRangeIndex

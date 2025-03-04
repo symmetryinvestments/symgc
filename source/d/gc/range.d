@@ -86,7 +86,7 @@ bool contains(const(void*)[] range, const void* ptr) {
 
 /**
  * This describes a range of addresses.
- * 
+ *
  * In order to avoid false pointer, we stored the
  * complement of the base address of the range.
  */

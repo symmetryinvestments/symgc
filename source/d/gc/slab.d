@@ -98,7 +98,7 @@ private:
 	 *  - i: The index of the item within the slab.
 	 *  - a: The address of the slab.
 	 *  - s: The size class of the slab.
-	 * 
+	 *
 	 * 63    56 55    48 47    40 39    32 31    24 23    16 15     8 7      0
 	 * .......i iiiiiiii aaaaaaaa aaaaaaaa aaaaaaaa aaaaaaaa aaaa.... ..ssssss
 	 */

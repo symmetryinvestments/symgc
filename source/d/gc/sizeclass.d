@@ -13,22 +13,22 @@ import d.gc.util;
  * On the other hand, over allocating too much, for instance
  * by allocating the next power of 2 bytes, causes internal
  * fragmentation.
- * 
+ *
  * We want to keep fragmentation at a minimum so that we can
  * minimize the amount of memory that is wasted, which in turn
  * translates into better performances as teh pressure caches
  * and TLB is reduced.
- * 
+ *
  * As a compromise, the GC rounds up the requested allocation
  * to the closest size of the form `(4 + delta) << shift`
  * where delta is in the [0 .. 4) range. Each allocation is
  * then associated with a bin based oe the required allocation
  * size. This binning is a good compromise between internal
  * and external fragmentation in typical workloads.
- * 
+ *
  * The smallest possible delta is bounded by the Quantum.
  * This ensures that any allocation is Quantum aligned.
- * 
+ *
  * Size classes bellow 4 * Quantum are know as Tiny. Tiny
  * classes are special cased so finer granularity can be
  * provided at that level.

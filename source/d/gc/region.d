@@ -480,7 +480,7 @@ struct Region {
 	 *  - c: The alloc class.
 	 *  - a: The address (BlockSize-aligned)
 	 *  - g: The generation.
-	 * 
+	 *
 	 * 63    56 55    48 47    40 39    32 31    24 23    16 15     8 7      0
 	 * cccccccc ........ aaaaaaaa aaaaaaaa aaaaaaaa aaa..... ........ gggggggg
 	 */

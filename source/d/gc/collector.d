@@ -66,10 +66,10 @@ private:
 		 * We might have allocated, and therefore refilled the bin
 		 * during the collection process. As a result, slots in the
 		 * bins may not be marked at this point.
-		 * 
+		 *
 		 * The straightforward way to handle this is simply to flush
 		 * the bins.
-		 * 
+		 *
 		 * Alternatively, we could make sure the slots are marked.
 		 */
 		threadCache.flush();

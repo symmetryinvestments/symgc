@@ -33,11 +33,11 @@ private:
 
 	/**
 	 * The bins themselves.
-	 * 
+	 *
 	 * The thread cache allocates numerous slots that it stores
 	 * in bins. This ensures most allocation can be served from
 	 * bins directly without requiring any kind of lock.
-	 * 
+	 *
 	 * This also ensure that, when we take the locks, we amortize
 	 * the cost of doing over numerous allocations.
 	 */
@@ -46,7 +46,7 @@ private:
 
 	/**
 	 * Section for fields that are unused for "regular" operations.
-	 * 
+	 *
 	 * These fields are only necessary for infrequent operation, so we
 	 * segregate them in order to get better locality on the frequently
 	 * used ones.
@@ -642,23 +642,23 @@ private:
 private:
 	/**
 	 * Appendable's mechanics:
-	 * 
+	 *
 	 *  __data__  _____free space_______
 	 * /        \/                      \
 	 * -----sss s....... ....... ........
 	 *      \___________________________/
 	 * 	           Capacity is 27
-	 * 
+	 *
 	 * If the slice's end doesn't match the used capacity,
 	 * then we return 0 in order to force a reallocation
 	 * when appending:
-	 * 
+	 *
 	 *  ___data____  ____free space_____
 	 * /           \/                   \
 	 * -----sss s---.... ....... ........
 	 *      \___________________________/
 	 * 	           Capacity is 0
-	 * 
+	 *
 	 * See also: https://dlang.org/spec/arrays.html#capacity-reserve
 	 */
 	bool validateCapacity(const void[] slice, const void* address,

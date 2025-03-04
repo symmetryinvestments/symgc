@@ -113,13 +113,13 @@ private:
 	 * The extent itself is 7 bits aligned and the address space 48 bits.
 	 * This leaves us with the low 7 bits and the high 16 bits of the extent's
 	 * pointer to play with.
-	 * 
+	 *
 	 * We use these bits to pack the following data in the descriptor:
 	 *  - i: The index within the extent, 4 bits truncated.
 	 *  - a: The arena index.
 	 *  - e: The extent class.
 	 *  - p: The extent pointer.
-	 * 
+	 *
 	 * 63    56 55    48 47    40 39             8 7      0
 	 * iiiiaaaa aaaaaaaa pppppppp [extent pointer] p.eeeeee
 	 */

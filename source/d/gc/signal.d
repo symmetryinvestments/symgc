@@ -53,7 +53,7 @@ void suspendThreadFromSignal(ThreadState* ts) {
 	 * been pushed on the stack, and it contains the values for all the
 	 * registers.
 	 * It is capital that the signal handler uses SA_SIGINFO for this.
-	 * 
+	 *
 	 * In addition, we do not need to mask the resume signal, because
 	 * the signal handler should do that for us already.
 	 */
@@ -126,7 +126,7 @@ void suspendThreadImpl(ThreadState* ts) {
 
 	/**
 	 * Suspend this thread's execution untill the resume signal is sent.
-	 * 
+	 *
 	 * We could stop all the thread by having them wait on a mutex,
 	 * but we also want to ensure that we do not run code via signals
 	 * while the thread is suspended, and the mutex solution is unable

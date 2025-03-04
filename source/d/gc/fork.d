@@ -20,7 +20,7 @@ void prepare() {
 	 * The order in which locks are taken is important
 	 * as taking them in the wrong order will cause
 	 * deadlocks.
-	 * 
+	 *
 	 * FIXME: At the moment, we only take the lock for
 	 *        the collection process. This ensures we
 	 *        can use the fork/exec pattern safely, but

@@ -102,7 +102,7 @@ private:
 	 *  - n: The number of free slots.
 	 *  - p: The address of the memory managed by Extent.
 	 *  - a: The arena index.
-	 * 
+	 *
 	 * 63    56 55    48 47    40 39    32 31    24 23    16 15     8 7      0
 	 * nnnnnnnn nnnnnnnn pppppppp pppppppp pppppppp pppppppp ppppaaaa aaaaaaaa
 	 */
@@ -137,7 +137,7 @@ private:
 	 *  - For sparse slabs, we store the GC cycle in the lower 8 bits, and turn
 	 *    the higher bits into a bitfield. If the GC cycle is incorrect, then the
 	 *    bitfield can be ignored.
-	 * 
+	 *
 	 * Using the GC cycle ensures that we do not need to cleanup in between cycles.
 	 * The leftover data are known to be outdated.
 	 */
@@ -160,22 +160,22 @@ private:
 	 *  - b: Whether the slot is allocated.
 	 *  - f: Whether the slot has metadata.
 	 *  - m: Mark bits for the GC.
-	 * 
+	 *
 	 *      0      128      256              512
 	 * 512: bbbbbbbb bbbbbbbb bbbbbbbb bbbbbbbb
 	 * 256: bbbbbbbb bbbbbbbb ffffffff ffffffff
 	 * 128: bbbbbbbb mmmmmmmm ffffffff ........
-	 * 
+	 *
 	 * When a metadata flag is required, but no space is available for
 	 * them in the bitfields, we expect the GC to use the next size class.
-	 * 
+	 *
 	 * When mark bits are required, but no space is available for them
 	 * a bitfield is allocated on the heap, and a pointer to it is stored
 	 * in the GC metadata.
-	 * 
+	 *
 	 * When this is a large allocation, we store whether the allocation
 	 * has metadata, and if there is a one, a pointer to the finalizer.
-	 * 
+	 *
 	 * FIXME: When considering this bitfield and the GC metadata, we have a
 	 *        640 bits budget to play with. Size class 2 contains 170 slots,
 	 *        but currently does not support marking inline. However, even
@@ -647,7 +647,7 @@ alias PriorityExtentHeap = Heap!(Extent, priorityExtentCmp);
  *        A better approach would be to prefers older slabs/blocks, which
  *        are more likely to contain "immortal" elements, and discriminate
  *        on address to tie break.
- * 
+ *
  * Note:
  * This used to use the bits in the Extent, but now we simply use the address.
  * This works, contrary to the previous approach which could lead to heap

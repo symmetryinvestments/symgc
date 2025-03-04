@@ -72,7 +72,7 @@ public:
 
 	/**
 	 * This function is used during the mark phase of the GC cycle.
-	 * 
+	 *
 	 * It is therefore capital that methods that add/remove roots
 	 * mark the thread as busy so it is not paused while holding
 	 * the mutex.

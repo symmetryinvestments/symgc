@@ -19,24 +19,24 @@ enum ThreadBinCount = 2 * BinCount;
 
 /**
  * The ThreadBin manages a cache associated with a given size class.
- * 
+ *
  * Instead of allocating one element a the time, we allocate several
  * and store them in the cache. This way, a thread can do multiple
  * allocations before requiring a new round trip in the arena. Even
  * better, if the thread frees its slots, they are returned to the
  * cache and can be reused.
- * 
+ *
  * The cache is a buffer containing pointers organized as follow:
- * 
+ *
  * low address                                        high address
  * |----- stashed -----|----- available -----|----- cached -----|
  * ^                   ^                     ^      ^           ^
  * bottom              available             head   low water   top
- * 
+ *
  * Because the buffer is never larger than 64k, we can store exclusively
  * the lower 16-bits of all the pointer above except one. This ensures
  * that we do not use more cache than strictly required.
- * 
+ *
  * On a regular basis, we run a maintenance routine on the bins. During
  * that maintenance, we set the low water to the head of the cache. When
  * element are removed from the cache, the low water mark is also moved.
@@ -98,7 +98,7 @@ public:
 		 *       We do not think it is worth the complication and performance
 		 *       hit in the general case, but something we might want to add
 		 *       in the future for security sensitive applications.
-		 * 
+		 *
 		 * http://www.phreedom.org/research/heap-feng-shui/heap-feng-shui.html
 		 */
 
@@ -112,11 +112,11 @@ public:
 		 * We could simplify this code by inserting from top to bottom,
 		 * in order to avoid moving all the elements when the stack has not
 		 * been filled.
-		 * 
+		 *
 		 * However, because we allocate from the best slab to the worse one,
 		 * this would result in a stack that allocate from the worse slab
 		 * before the best ones.
-		 * 
+		 *
 		 * So we allocate from the bottom to the top, and move the whole stack
 		 * if we did not quite reach the top.
 		 */
@@ -150,7 +150,7 @@ public:
 		 * us without anything to allocate from.
 		 * A high low water mark indicates a low allocation rate, so we
 		 * flush more when the low water mark is high.
-		 * 
+		 *
 		 * Note: We ensure that the low water mark never reaches 0.
 		 *       It would make it look like this bin is high allocation.
 		 */
@@ -311,7 +311,7 @@ private:
 
 	/**
 	 * We "return" the pointer by ref and indicate success with a boolean.
-	 * 
+	 *
 	 * We could return null in case of failure, but we never store null
 	 * in the cache, and we don't want to cause a stall on success if
 	 * the value wasn't in cache.

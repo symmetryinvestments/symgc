@@ -28,14 +28,14 @@ private:
 
 	/**
 	 * We separate dense from sparse allocations.
-	 * 
+	 *
 	 * Dense allocations are slabs which contains a lot of elements.
 	 * In practice, these slabs tends to be long lived, because it
 	 * is unlikely that all of their slots get freed at the same time.
 	 * In addition, all slabs that require spacial care, such as slabs
 	 * that cannot do inline marking, are dense, so segregating them
 	 * allows to iterate over all of them efficiently.
-	 * 
+	 *
 	 * The second set of heaps is used for sparse allocations.
 	 * Sparse allocation are slabs with few elements, and large
 	 * allocations.
