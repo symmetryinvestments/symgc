@@ -19,12 +19,12 @@ DMD master (2.111 base)
 - [X] base.d
 - [ ] bin.d
 - [X] bitmap.d
-- [ ] block.d
+- [X] block.d
 - [ ] capi.d
 - [ ] collector.d
 - [X] cpu.d
-- [ ] emap.d
-- [ ] extent.d
+- [X] emap.d
+- [X] extent.d
 - [ ] fork.d
 - [ ] global.d
 - [X] heap.d
