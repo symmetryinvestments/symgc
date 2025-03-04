@@ -15,10 +15,6 @@ private:
 
 	Link root;
 
-	static ref Node nodeData(N* n) {
-		return .nodeData!NodeName(n);
-	}
-
 public:
 	@property
 	bool empty() {
@@ -90,10 +86,6 @@ public:
 
 private:
 
-ref Node!(N, NodeName) nodeData(string NodeName, N)(N* n) {
-	return __traits(getMember, *n, NodeName);
-}
-
 struct Link(N, string NodeName) {
 	alias Node = .Node!(N, NodeName);
 
@@ -115,7 +107,7 @@ struct Link(N, string NodeName) {
 
 	@property
 	ref Node nodeData() {
-		return .nodeData!NodeName(node);
+		return __traits(getMember, *node, NodeName);
 	}
 
 	@property
