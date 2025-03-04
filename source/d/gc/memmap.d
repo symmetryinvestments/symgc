@@ -4,10 +4,10 @@ import d.gc.spec;
 import d.gc.util;
 
 version(linux) {
-    import core.sys.linux.sys.mman;
+	import core.sys.linux.sys.mman;
 
-    // not included in druntime for some reason
-    enum MADV_FREE = 8;
+	// not included in druntime for some reason
+	enum MADV_FREE = 8;
 }
 
 void* pages_map(void* addr, size_t size, size_t alignment) {
@@ -87,7 +87,7 @@ void pages_zero(void* addr, size_t size) {
 	if (size >= PurgePageThresoldSize) {
 		pages_purge(addr, size);
 	} else {
-        import core.stdc.string;
+		import core.stdc.string;
 		memset(addr, 0, size);
 	}
 }

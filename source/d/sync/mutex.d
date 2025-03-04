@@ -116,10 +116,10 @@ private:
 		ThreadData* next;
 		ThreadData* skip;
 
-        union {
-            shared Waiter waiter;
-            Waiter unsharedWaiter;
-        }
+		union {
+			shared Waiter waiter;
+			Waiter unsharedWaiter;
+		}
 
 		bool isEquivalentTo(const WaitParams* other) const {
 			return waitParams.isEquivalentTo(other);
@@ -175,10 +175,10 @@ private:
 	static ThreadData threadData;
 
 	struct WaitParams {
-        union {
-            shared Atomic!uint handoff;
-            uint unsharedHandoff;
-        }
+		union {
+			shared Atomic!uint handoff;
+			uint unsharedHandoff;
+		}
 
 		bool delegate() condition;
 
@@ -559,18 +559,18 @@ private:
 
 version(unittest)
 private auto runThread(void* delegate() dg) {
-    extern(C) void* function(void*) fptr;
-    fptr = cast(typeof(fptr))dg.funcptr;
-    import core.sys.posix.pthread;
-    pthread_t tid;
-    auto r = pthread_create(&tid, null, fptr, dg.ptr);
-    assert(r == 0, "Failed to create thread!");
+	extern(C) void* function(void*) fptr;
+	fptr = cast(typeof(fptr))dg.funcptr;
+	import core.sys.posix.pthread;
+	pthread_t tid;
+	auto r = pthread_create(&tid, null, fptr, dg.ptr);
+	assert(r == 0, "Failed to create thread!");
 
-    return tid;
+	return tid;
 }
 
 @"locking" unittest {
-    import core.stdc.stdio;
+	import core.stdc.stdio;
 	import d.sync.atomic;
 	shared Mutex mutex;
 	shared Atomic!uint state;

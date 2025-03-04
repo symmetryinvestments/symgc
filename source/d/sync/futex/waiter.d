@@ -35,7 +35,7 @@ struct FutexWaiter {
 	}
 
 	void wakeup() shared {
-        auto wuc = wakeupCount.fetchAdd(1);
+		auto wuc = wakeupCount.fetchAdd(1);
 		if (wuc == 0) {
 			poke();
 		}
@@ -49,59 +49,59 @@ struct FutexWaiter {
 
 version(unittest)
 private auto runThread(void* delegate() dg) {
-    extern(C) void* function(void*) fptr;
-    fptr = cast(typeof(fptr))dg.funcptr;
-    import core.sys.posix.pthread;
-    pthread_t tid;
-    auto r = pthread_create(&tid, null, fptr, dg.ptr);
-    assert(r == 0, "Failed to create thread!");
+	extern(C) void* function(void*) fptr;
+	fptr = cast(typeof(fptr))dg.funcptr;
+	import core.sys.posix.pthread;
+	pthread_t tid;
+	auto r = pthread_create(&tid, null, fptr, dg.ptr);
+	assert(r == 0, "Failed to create thread!");
 
-    return tid;
+	return tid;
 }
 
 @"futex wait" unittest {
-    import d.sync.atomic;
-    shared Atomic!uint state;
-    shared Atomic!uint count;
-    shared FutexWaiter waiter;
-    void *run() {
-        while(true)
-        {
-            auto st = state.load();
-            while(st == 0)
-            {
-                waiter.block();
-                st = state.load();
-            }
-            if(st == 2)
-                break;
-            assert(st == 1);
-            state.casWeak(st, 0);
-            count.fetchAdd(1);
-        }
-        return null;
-    }
+	import d.sync.atomic;
+	shared Atomic!uint state;
+	shared Atomic!uint count;
+	shared FutexWaiter waiter;
+	void *run() {
+		while(true)
+		{
+			auto st = state.load();
+			while(st == 0)
+			{
+				waiter.block();
+				st = state.load();
+			}
+			if(st == 2)
+				break;
+			assert(st == 1);
+			state.casWeak(st, 0);
+			count.fetchAdd(1);
+		}
+		return null;
+	}
 
-    auto tid = runThread(&run);
-    foreach(i; 0 .. 10)
-    {
-        assert(state.load() == 0);
-        state.store(1);
-        waiter.wakeup();
+	auto tid = runThread(&run);
+	foreach(i; 0 .. 10)
+	{
+		assert(state.load() == 0);
+		state.store(1);
+		waiter.wakeup();
 
-        while(state.load() == 1)
-        {
-            import core.thread;
-            Thread.yield();
-        }
-    }
-    assert(state.load() == 0);
-    state.store(2);
-    waiter.wakeup();
+		while(state.load() == 1)
+		{
+			import core.thread;
+			Thread.yield();
+		}
+	}
+	assert(state.load() == 0);
+	state.store(2);
+	waiter.wakeup();
 
-    void* result;
+	void* result;
 	import core.sys.posix.pthread;
-    pthread_join(tid, &result);
-    assert(count.load() == 10);
-    assert(waiter.wakeupCount.load() == 0);
+	pthread_join(tid, &result);
+	assert(count.load() == 10);
+	assert(waiter.wakeupCount.load() == 0);
 }

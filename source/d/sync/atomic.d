@@ -40,15 +40,15 @@ public:
 	}
 
 	T fetchAnd(T n, MemoryOrder order = MemoryOrder.SeqCst) shared {
-        return atomicFetchOp!"&"(value, n);
+		return atomicFetchOp!"&"(value, n);
 	}
 
 	T fetchOr(T n, MemoryOrder order = MemoryOrder.SeqCst) shared {
-        return atomicFetchOp!"|"(value, n);
+		return atomicFetchOp!"|"(value, n);
 	}
 
 	T fetchXor(T n, MemoryOrder order = MemoryOrder.SeqCst) shared {
-        return atomicFetchOp!"^"(value, n);
+		return atomicFetchOp!"^"(value, n);
 	}
 
 	bool cas(MemoryOrder order = MemoryOrder.SeqCst)(ref T expected, T desired) shared {

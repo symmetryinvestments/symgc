@@ -91,14 +91,14 @@ private:
 
 version(unittest)
 private auto runThread(void* delegate() dg) {
-    extern(C) void* function(void*) fptr;
-    fptr = cast(typeof(fptr))dg.funcptr;
-    import core.sys.posix.pthread;
-    pthread_t tid;
-    auto r = pthread_create(&tid, null, fptr, dg.ptr);
-    assert(r == 0, "Failed to create thread!");
+	extern(C) void* function(void*) fptr;
+	fptr = cast(typeof(fptr))dg.funcptr;
+	import core.sys.posix.pthread;
+	pthread_t tid;
+	auto r = pthread_create(&tid, null, fptr, dg.ptr);
+	assert(r == 0, "Failed to create thread!");
 
-    return tid;
+	return tid;
 }
 
 @"sharedLocks" unittest {
@@ -401,7 +401,7 @@ private auto runThread(void* delegate() dg) {
 			mutex.unlock();
 
 			// Sleep a tiny bit (10ms) to ensure a steady state
-            import core.sys.posix.unistd;
+			import core.sys.posix.unistd;
 			usleep(10 * 1000);
 
 			assert(load(_locked) == locked,
@@ -576,7 +576,7 @@ private auto runThread(void* delegate() dg) {
 			assert(ne == 0);
 			assert(ns >= 0 && ns < MaxShared);
 
-            import core.sys.posix.sched;
+			import core.sys.posix.sched;
 			sched_yield();
 			ns = numSharedLocks.fetchSub(1);
 

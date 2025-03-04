@@ -732,9 +732,9 @@ struct Path(N, string NodeName) {
 
 	// 128 Mb to ramble through.
 	assert(Stuff.sizeof * Trees * Items <= 128 * 1024 * 1024);
-    import core.stdc.stdlib : malloc, free;
+	import core.stdc.stdlib : malloc, free;
 	nodes = cast(Stuff[Trees][Items]*)malloc(128 * 1024 * 1024); //__sd_gc_alloc(128 * 1024 * 1024);
-    scope(exit) free(nodes);
+	scope(exit) free(nodes);
 	ulong prand = 365307287;
 
 	foreach (i; 0 .. Items) {
