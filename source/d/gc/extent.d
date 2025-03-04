@@ -1,5 +1,4 @@
 module d.gc.extent;
-version(none):
 
 import d.sync.atomic;
 
@@ -382,12 +381,12 @@ public:
 			enum NimbleSize = 8 * ulong.sizeof;
 			auto shift = n * NimbleSize;
 
-			import sdc.intrinsics;
+			import sdcgc.intrinsics;
 			uint count = popCount(current);
 			count = min(count, nfill);
 
 			foreach (_; 0 .. count) {
-				import sdc.intrinsics;
+				import sdcgc.intrinsics;
 				auto bit = countTrailingZeros(current);
 				current ^= 1UL << bit;
 
@@ -523,7 +522,7 @@ public:
 			return !slabMetadataMarks.setBitAtomic(index);
 		}
 
-		auto bmp = &outlineMarks;
+		auto bmp = &outlineMarks();
 		return bmp !is null && !bmp.setBitAtomic(index);
 	}
 
@@ -595,7 +594,7 @@ private:
 	ulong* getMarksDenseImpl(bool clearOutlines)() {
 		assert(extentClass.dense, "Size class not dense!");
 		if (extentClass.supportsInlineMarking) {
-			return cast(ulong*) &slabMetadataMarks;
+			return cast(ulong*) &slabMetadataMarks();
 		}
 
 		auto bmp = outlineMarksBuffer;
@@ -626,12 +625,12 @@ private:
 	assert(e.finalizer is null);
 	assert(e.usedCapacity == 20000);
 
-	e.setFinalizer(destruct);
-	assert(cast(void*) e.finalizer is cast(void*) destruct);
+	e.setFinalizer(&destruct);
+	assert(cast(void*) e.finalizer is cast(void*) &destruct);
 	assert(e.usedCapacity == 20000);
 
 	e.setUsedCapacity(20400);
-	assert(cast(void*) e.finalizer is cast(void*) destruct);
+	assert(cast(void*) e.finalizer is cast(void*) &destruct);
 	assert(e.usedCapacity == 20400);
 }
 
