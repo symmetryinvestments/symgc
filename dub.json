@@ -1,9 +1,10 @@
 {
 	"authors": [
-		"Steven Schveighoffer"
+		"Steven Schveighoffer",
+        "Amaury Sachet"
 	],
 	"copyright": "Copyright © 2025, Steven Schveighoffer, Amaury Sachet",
 	"description": "SDC Garbage collector, ported to dmd",
 	"license": "MIT",
-	"name": "sdcgc"
+	"name": "symgc"
 }
