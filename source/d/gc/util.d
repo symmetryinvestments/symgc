@@ -291,14 +291,19 @@ size_t alignUpOffset(const void* ptr, size_t alignment) {
 }
 
 bool isLittleEndian() {
-	uint v = 1;
-	return *(cast(ubyte*) &v) != 0;
+	version(LittleEndian)
+		return true;
+	else
+		return false;
 }
 
 T nativeToBigEndian(T)(T x) {
 	if (isLittleEndian()) {
-		import sdcgc.intrinsics;
-		x = bswap(x);
+		import core.bitop;
+		static if(is(typeof(byteswap(x))))
+			x = byteswap(x);
+		else
+			x = bswap(x);
 	}
 
 	return x;

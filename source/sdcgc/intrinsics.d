@@ -1,6 +1,6 @@
 module sdcgc.intrinsics;
 
-public import core.bitop : bsr, bsf, popcnt, bitswap;
+public import core.bitop : bsr, bsf, popcnt, bswap;
 
 // TODO: Change all uses of countLeadingZeros to bsr directly
 auto countLeadingZeros(T)(T x) {
@@ -9,7 +9,6 @@ auto countLeadingZeros(T)(T x) {
 }
 alias countTrailingZeros = bsf;
 alias popCount = popcnt;
-alias bswap = bitswap;
 
 // copy atomicOp, but with returning the get value.
 T atomicFetchOp(string op, T, V1)(ref shared T val, V1 mod)

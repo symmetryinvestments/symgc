@@ -1,88 +1,5 @@
 module d.gc.slab;
 
-// NOTE: The following code is copied from below, so other modules that need
-// this data can compile. This is an independent piece, and may be a candidate
-// to split into its own module. LOnce the version(none) is removed below, this
-// can all be deleted.
-import d.gc.spec;
-import d.gc.util;
-
-struct BinInfo {
-	ushort slotSize;
-	ushort nslots;
-	ubyte npages;
-	ubyte shift;
-	ushort mul;
-
-	this(ushort slotSize, ubyte shift, ubyte npages, ushort nslots) {
-		this.slotSize = slotSize;
-		this.nslots = nslots;
-		this.npages = npages;
-		this.shift = (shift + 17) & 0xff;
-
-		// XXX: out contract
-		enum MaxShiftMask = (8 * size_t.sizeof) - 1;
-		assert(this.shift == (this.shift & MaxShiftMask));
-
-		/**
-		 * This is a bunch of magic values used to avoid requiring
-		 * division to find the index of an item within a run.
-		 *
-		 * Computed using finddivisor.d
-		 */
-		ushort[4] mulIndices = [32768, 26215, 21846, 18725];
-		auto tag = (slotSize >> shift) & 0x03;
-		this.mul = mulIndices[tag];
-	}
-
-	uint computeIndex(size_t offset) const {
-		// FIXME: in contract.
-		assert(offset < npages * PageSize, "Offset out of bounds!");
-
-		return cast(uint) ((offset * mul) >> shift);
-	}
-
-	@property
-	bool dense() const {
-		// We use the number of items as a proxy to estimate the density
-		// of the span. Dense spans are assumed to be long lived.
-		return nslots > 16;
-	}
-
-	@property
-	bool sparse() const {
-		return !dense;
-	}
-
-	@property
-	bool supportsMetadata() const {
-		return nslots <= 256;
-	}
-
-	@property
-	bool supportsInlineMarking() const {
-		return nslots <= 128;
-	}
-}
-
-import d.gc.sizeclass;
-immutable BinInfo[BinCount] binInfos = getBinInfos();
-
-@"binInfos" unittest {
-	foreach (uint sc, bin; binInfos) {
-		assert(bin.supportsMetadata == sizeClassSupportsMetadata(sc));
-		assert(bin.supportsInlineMarking == sizeClassSupportsInlineMarking(sc));
-		assert(bin.dense == isDenseSizeClass(sc));
-		assert(bin.sparse == isSparseSizeClass(sc));
-	}
-}
-
-enum InvalidBinID = 0xff;
-
-// END COPIED CODE
-
-version(none):
-
 import d.gc.emap;
 import d.gc.extent;
 import d.gc.size;
@@ -195,7 +112,7 @@ private:
 
 	Data data;
 
-	enum FinalizerBit = nativeToBigEndian!size_t(0x2);
+	enum FinalizerBit = nativeToBigEndian!size_t(0x40);
 
 public:
 	static SlotMetadata* fromBlock(void* ptr, size_t slotSize) {
@@ -207,10 +124,10 @@ public:
 		return readPackedFreeSpace(&data.freeSpaceData.freeSpace);
 	}
 
-	void setFreeSpace(size_t size) {
+	void setFreeSpace(size_t size, ushort mask) {
 		assert(size > 0, "Attempt to set a slot metadata size of 0!");
 
-		writePackedFreeSpace(&data.freeSpaceData.freeSpace, size);
+		writePackedFreeSpace(&data.freeSpaceData.freeSpace, size, mask);
 	}
 
 	@property
@@ -306,12 +223,15 @@ public:
 		       "New finalizer pointer is invalid!");
 
 		auto freeSpaceValue = slotSize - initialUsedCapacity;
-		bool isLarge = freeSpaceValue > 0x3f;
-		auto finalizerSet = hasFinalizer << 1;
-		ushort native =
-			(freeSpaceValue << 2 | isLarge | finalizerSet) & ushort.max;
+		ushort native = void;
+		if (freeSpaceValue == 1) {
+			native = SingleByteBit;
+		} else {
+			auto finalizerSet = hasFinalizer ? FreeSpaceFinalizerBit : 0;
+			native = (freeSpaceValue | finalizerSet) & ushort.max;
+		}
 
-		auto newMetadata = nativeToBigEndian!size_t(native);
+		auto newMetadata = size_t(native) << 48;
 
 		// TODO: Currently only works on little-endian!!!
 		// On a big-endian machine, the unused high 16 bits of a pointer will be
@@ -346,11 +266,14 @@ private:
 			return;
 		}
 
-		slotMetadata.setFreeSpace(size);
+		ushort mask = ushort.max;
 		if (!_hasMetadata) {
+			mask &= ~FreeSpaceFinalizerBit;
 			e.enableMetadata(index);
 			_hasMetadata = true;
 		}
+
+		slotMetadata.setFreeSpace(size, mask);
 	}
 
 	@property
@@ -383,15 +306,16 @@ private:
 	auto block = base.reserveAddressSpace(BlockSize);
 	assert(block !is null);
 
-	static SlabAllocInfo simulateSmallAlloc(size_t size, uint slotIndex) {
+	SlabAllocInfo simulateSmallAlloc(size_t size, uint slotIndex) {
 		auto ec = ExtentClass.slab(getSizeClass(size));
+		auto slotSize = binInfos[ec.sizeClass].slotSize;
 		e.at(block, 1, null, ec);
 
 		void*[512] buffer = void;
-		e.batchAllocate(buffer.ptr, 512, size);
+		e.batchAllocate(buffer.ptr, 512, slotSize);
 
 		auto pd = PageDescriptor(e, ec);
-		auto allocAddress = block + slotIndex * size;
+		auto allocAddress = block + slotIndex * slotSize;
 		return SlabAllocInfo(pd, allocAddress);
 	}
 
@@ -432,6 +356,9 @@ private:
 			si.setUsedCapacity(size);
 			assert(si.usedCapacity == size);
 			assert(si.hasMetadata == (size != slotCapacity));
+			// Ensure SlotMetadata can be dirty when adjusting free space
+			auto slotData = (cast(ubyte*) si.address)[0 .. size];
+			slotData[size - 1] = 0xff;
 			assert(si.freeSpace == slotCapacity - size);
 			assert(!si.setUsedCapacity(slotCapacity + 1));
 
@@ -471,71 +398,82 @@ private:
 }
 
 /**
- * Packed Free Space is stored as a 14-bit unsigned integer, in one or two bytes:
+ * Packed Free Space is stored as a 14-bit unsigned integer, with 2 bits for flags.
  *
- * /---- byte at ptr ----\ /-- byte at ptr + 1 --\
- * B7 B6 B5 B4 B3 B2 B1 B0 A7 A6 A5 A4 A3 A2 A1 A0
- * \_______14 bits unsigned integer________/  \  \_ Set if and only if B0..B7 used.
- *                                             \_ Set when finalizer is present;
- *                                                preserved when writing.
+ * 15     8 7      0
+ * sfvvvvvv vvvvvvvv
+ *
+ * s: small bit set if length == 1
+ * f: finalizer bit = 1 if finalizer stored in allocation
+ * v: free space, only set if length > 1
+ *
+ * If free space is only 1 byte, then the lower byte of the 16-bit value is
+ * used by the allocation itself, and is not used while reading. Nor is it set
+ * when writing the upper byte
+ *
+ * Note: little endian only! The lower 8 bits are stored first in memory.
+ * For big endian support, we likely have to change the end where the bits go.
  */
 static assert(MaxSmallSize < 0x4000,
               "Max small alloc size doesn't fit in 14 bits!");
 
+// TODO: define bits for big endian
+enum FreeSpaceFinalizerBit = 1 << 14;
+enum SingleByteBit = 1 << 15;
+
 ushort readPackedFreeSpace(ushort* ptr) {
-	auto data = loadBigEndian(ptr);
-	auto mask = 0x3f | -(data & 1);
-	return (data >> 2) & mask;
+	assert(isLittleEndian(),
+	       "Packed free space not implemented for big endian!");
+	auto data = *ptr;
+	if (data & SingleByteBit) {
+		return 1;
+	}
+
+	return data & 0x3fff;
 }
 
-void writePackedFreeSpace(ushort* ptr, size_t x) {
+void writePackedFreeSpace(ushort* ptr, size_t x, ushort mask = ushort.max) {
 	assert(x < 0x4000, "x does not fit in 14 bits!");
-
-	bool isLarge = x > 0x3f;
-	ushort native = (x << 2 | isLarge) & ushort.max;
-	auto base = nativeToBigEndian(native);
-
-	auto smallMask = nativeToBigEndian!ushort(0xfd);
-	auto largeMask = nativeToBigEndian!ushort(0xfffd);
-	auto mask = isLarge ? largeMask : smallMask;
+	assert(isLittleEndian(),
+	       "Packed free space not implemented for big endian!");
 
 	auto current = *ptr;
-	auto delta = (current ^ base) & mask;
-	auto value = current ^ delta;
+	if (x == 1) {
+		current &= mask;
+		*ptr = current | SingleByteBit;
+		return;
+	}
 
-	*ptr = value & ushort.max;
+	current &= mask & FreeSpaceFinalizerBit;
+	*ptr = (x | current) & ushort.max;
 }
 
 @"packedFreeSpace" unittest {
-	enum FinalizerBit = nativeToBigEndian!ushort(0x2);
-
 	ubyte[2] a;
 	auto p = cast(ushort*) a.ptr;
 
 	foreach (ushort i; 0 .. 0x4000) {
 		// With finalizer bit set:
-		*p |= FinalizerBit;
+		*p |= FreeSpaceFinalizerBit;
 		writePackedFreeSpace(p, i);
 		assert(readPackedFreeSpace(p) == i);
-		assert(*p & FinalizerBit);
+		assert(*p & FreeSpaceFinalizerBit);
 
 		// With finalizer bit cleared:
-		*p &= ~FinalizerBit;
+		*p &= ~FreeSpaceFinalizerBit;
 		// Should remain same as before:
 		assert(readPackedFreeSpace(p) == i);
 		writePackedFreeSpace(p, i);
-		assert(!(*p & FinalizerBit));
+		assert(!(*p & FreeSpaceFinalizerBit));
 	}
 
-	// Make sure we do not distrub the penultimate byte
-	// when the value is small enough.
+	// Make sure we do not disturb the penultimate byte
+	// when the length is 1.
 	foreach (x; 0 .. 256) {
 		a[0] = 0xff & x;
-		foreach (ubyte y; 0 .. 0x40) {
-			writePackedFreeSpace(p, y);
-			assert(readPackedFreeSpace(p) == y);
-			assert(a[0] == x);
-		}
+		writePackedFreeSpace(p, 1);
+		assert(readPackedFreeSpace(p) == 1);
+		assert(a[0] == x);
 	}
 }
 
