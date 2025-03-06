@@ -1,4 +1,16 @@
 module d.gc.signal;
+
+import core.sys.posix.signal;
+
+// TODO: these should be in core.sys.posix.signal
+// Power failure imminent.
+enum SIGPWR = 30;
+// CPU time limit exceeded.
+enum SIGXCPU = 24;
+
+enum SIGSUSPEND = SIGPWR;
+enum SIGRESUME = SIGXCPU;
+
 version(none):
 
 import d.gc.tcache;

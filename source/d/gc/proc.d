@@ -1,7 +1,6 @@
 module d.gc.proc;
-version(none):
 
-import sys.posix.types;
+import core.sys.posix.sys.types;
 
 /**
  * Because Linux forces us to use signals to stop the world.
@@ -12,11 +11,11 @@ import sys.posix.types;
 bool isDetached(pid_t tid) {
 	char[1024] buffer = void;
 
-	import core.stdc.unistd, core.stdc.stdio;
+	import core.sys.posix.unistd, core.stdc.stdio;
 	auto len =
 		snprintf(buffer.ptr, buffer.length, "/proc/self/task/%d/status\0", tid);
 
-	import core.stdc.fcntl;
+	import core.sys.posix.fcntl;
 	auto fd = open(buffer.ptr, O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
 		return false;
@@ -79,7 +78,7 @@ bool isDetached(pid_t tid) {
 
 private:
 
-uint decodeHex(char* s) {
+uint decodeHex(const char* s) {
 	ulong v;
 	foreach (i; 0 .. 8) {
 		v |= ulong(s[i]) << (8 * i);
@@ -154,11 +153,12 @@ bool next_line(int fd, char[] buffer, ref char[] line, ref char[] workset) {
 			return false;
 		}
 
+		import core.stdc.string : memmove;
 		memmove(bstart, lstart, lsize);
 		lstart = bstart;
 		current = bstart + lsize;
 
-		import core.stdc.unistd;
+		import core.sys.posix.unistd;
 		auto n = read(fd, current, rsize);
 		if (n <= 0) {
 			// We failed to read or reached EOF.
