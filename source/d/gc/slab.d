@@ -112,22 +112,26 @@ private:
 
 	Data data;
 
-	enum FinalizerBit = nativeToBigEndian!size_t(0x40);
-
 public:
 	static SlotMetadata* fromBlock(void* ptr, size_t slotSize) {
 		return cast(SlotMetadata*) (ptr + slotSize) - 1;
 	}
 
 	@property
-	ushort freeSpace() {
+	size_t freeSpace() {
 		return readPackedFreeSpace(&data.freeSpaceData.freeSpace);
 	}
 
-	void setFreeSpace(size_t size, ushort mask) {
+	void setFreshFreeSpace(size_t size) {
 		assert(size > 0, "Attempt to set a slot metadata size of 0!");
 
-		writePackedFreeSpace(&data.freeSpaceData.freeSpace, size, mask);
+		writeFreshPackedFreeSpace(&data.freeSpaceData.freeSpace, size);
+	}
+
+	void setFreeSpace(size_t size) {
+		assert(size > 0, "Attempt to set a slot metadata size of 0!");
+
+		writePackedFreeSpace(&data.freeSpaceData.freeSpace, size);
 	}
 
 	@property
@@ -139,7 +143,7 @@ public:
 
 	@property
 	bool hasFinalizer() {
-		return (data.finalizerData & FinalizerBit) != 0;
+		return (data.freeSpaceData.freeSpace & FinalizerBit) != 0;
 	}
 }
 
@@ -223,11 +227,12 @@ public:
 		       "New finalizer pointer is invalid!");
 
 		auto freeSpaceValue = slotSize - initialUsedCapacity;
-		ushort native = void;
+		ushort native;
 		if (freeSpaceValue == 1) {
+			assert(!hasFinalizer);
 			native = SingleByteBit;
 		} else {
-			auto finalizerSet = hasFinalizer ? FreeSpaceFinalizerBit : 0;
+			auto finalizerSet = hasFinalizer ? FinalizerBit : 0;
 			native = (freeSpaceValue | finalizerSet) & ushort.max;
 		}
 
@@ -266,32 +271,32 @@ private:
 			return;
 		}
 
-		ushort mask = ushort.max;
 		if (!_hasMetadata) {
-			mask &= ~FreeSpaceFinalizerBit;
+			slotMetadata.setFreshFreeSpace(size);
 			e.enableMetadata(index);
 			_hasMetadata = true;
+		} else {
+			slotMetadata.setFreeSpace(size);
 		}
-
-		slotMetadata.setFreeSpace(size, mask);
 	}
 
 	@property
 	bool finalizerEnabled() {
-		// Right now we fetch hasMetadata eagerly, but the FinalizerBit check
-		// is cheaper. But it may be worthwhile to return early if FinalizerBit
-		// is clear, i.e. to snoop the extent's metadata lazily. The reasons:
-		// 1) If the slot is not full, the bit at the FinalizerBit position
-		//    is most likely 0.
-		// 2) If it has metadata, usually it won't have a finalizer: still 0.
-		// 3) If the metadata space contains an aligned pointer, the last byte
-		//    will be the MSB of that pointer, which will always be 0.
-		// 4) If the space contains a number, its MSB will likely be zero,
-		//    as most numbers are small.
-		// 5) If there is something else in there, that is not heavily biased
-		//    (float, random/compressed data) then we're still at 50/50.
-		// We should expect to find a zero in there the VAST majority of the time.
-
+		/**
+		 * Right now we fetch hasMetadata eagerly, but the FinalizerBit check
+		 * is cheaper. But it may be worthwhile to return early if FinalizerBit
+		 * is clear, i.e. to snoop the extent's metadata lazily. The reasons:
+		 * 1. If the slot is not full, the bit at the FinalizerBit position
+		 *    is most likely 0.
+		 * 2. If it has metadata, usually it won't have a finalizer: still 0.
+		 * 3. If the metadata space contains an aligned pointer, the last byte
+		 *    will be the MSB of that pointer, which will always be 0.
+		 * 4. If the space contains a number, its MSB will likely be zero,
+		 *    as most numbers are small.
+		 * 5. If there is something else in there, that is not heavily biased
+		 *    (float, random/compressed data) then we're still at 50/50.
+		 * We should expect to find a zero in there the VAST majority of the time.
+		 */
 		return _hasMetadata && slotMetadata.hasFinalizer;
 	}
 }
@@ -404,7 +409,7 @@ private:
  * sfvvvvvv vvvvvvvv
  *
  * s: small bit set if length == 1
- * f: finalizer bit = 1 if finalizer stored in allocation
+ * f: finalizer bit = 1 if a finalizer is stored in allocation
  * v: free space, only set if length > 1
  *
  * If free space is only 1 byte, then the lower byte of the 16-bit value is
@@ -417,35 +422,42 @@ private:
 static assert(MaxSmallSize < 0x4000,
               "Max small alloc size doesn't fit in 14 bits!");
 
-// TODO: define bits for big endian
-enum FreeSpaceFinalizerBit = 1 << 14;
+enum FinalizerBit = 1 << 14;
 enum SingleByteBit = 1 << 15;
+enum FreeSpaceMask = ushort.max & ~(FinalizerBit | SingleByteBit);
 
-ushort readPackedFreeSpace(ushort* ptr) {
+size_t readPackedFreeSpace(ushort* ptr) {
 	assert(isLittleEndian(),
 	       "Packed free space not implemented for big endian!");
 	auto data = *ptr;
-	if (data & SingleByteBit) {
-		return 1;
-	}
-
-	return data & 0x3fff;
+	auto value = data & FreeSpaceMask;
+	return (data & SingleByteBit) ? 1 : value;
 }
 
-void writePackedFreeSpace(ushort* ptr, size_t x, ushort mask = ushort.max) {
+void writeFreshPackedFreeSpace(ushort* ptr, size_t x) {
+	return writePackedFreeSpaceImpl!false(ptr, x);
+}
+
+void writePackedFreeSpace(ushort* ptr, size_t x) {
+	return writePackedFreeSpaceImpl!true(ptr, x);
+}
+
+void writePackedFreeSpaceImpl(bool PreserveFinalizer)(ushort* ptr, size_t x) {
 	assert(x < 0x4000, "x does not fit in 14 bits!");
 	assert(isLittleEndian(),
 	       "Packed free space not implemented for big endian!");
 
 	auto current = *ptr;
-	if (x == 1) {
-		current &= mask;
-		*ptr = current | SingleByteBit;
-		return;
+	auto small = current | SingleByteBit;
+	auto large = x;
+	if (PreserveFinalizer) {
+		large |= current & FinalizerBit;
+	} else {
+		small &= ~FinalizerBit;
 	}
 
-	current &= mask & FreeSpaceFinalizerBit;
-	*ptr = (x | current) & ushort.max;
+	auto value = (x == 1 ? small : large);
+	*ptr = value & ushort.max;
 }
 
 @"packedFreeSpace" unittest {
@@ -454,17 +466,23 @@ void writePackedFreeSpace(ushort* ptr, size_t x, ushort mask = ushort.max) {
 
 	foreach (ushort i; 0 .. 0x4000) {
 		// With finalizer bit set:
-		*p |= FreeSpaceFinalizerBit;
+		*p |= FinalizerBit;
 		writePackedFreeSpace(p, i);
 		assert(readPackedFreeSpace(p) == i);
-		assert(*p & FreeSpaceFinalizerBit);
+		assert(*p & FinalizerBit);
 
 		// With finalizer bit cleared:
-		*p &= ~FreeSpaceFinalizerBit;
+		*p &= ~FinalizerBit;
 		// Should remain same as before:
 		assert(readPackedFreeSpace(p) == i);
 		writePackedFreeSpace(p, i);
-		assert(!(*p & FreeSpaceFinalizerBit));
+		assert(!(*p & FinalizerBit));
+
+		// Ensure a fresh write always clears the finalizer bit.
+		*p |= FinalizerBit;
+		writeFreshPackedFreeSpace(p, i);
+		assert(readPackedFreeSpace(p) == i);
+		assert(~(*p & FinalizerBit));
 	}
 
 	// Make sure we do not disturb the penultimate byte
