@@ -1,12 +1,11 @@
 module d.gc.tbin;
-version(none):
 
 import d.gc.arena;
 import d.gc.emap;
 import d.gc.sizeclass;
 import d.gc.spec;
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
 
 /**
  * Some thread cache configuration parameters.
@@ -185,6 +184,7 @@ public:
 		 *       optimizations that can be done based on that fact.
 		 *       We need a batch emap lookup facility.
 		 */
+		import core.stdc.stdlib : alloca;
 		auto pds = cast(PageDescriptor*) alloca(nflush * PageDescriptor.sizeof);
 
 		foreach (i, ptr; worklist) {

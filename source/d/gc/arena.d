@@ -141,7 +141,7 @@ public:
 			.batchAllocate(&filler, emap, sizeClass, top, bottom, slotSize);
 	}
 
-	uint batchFree(ref CachedExtentMap emap, const(void)*[] worklist,
+	uint batchFree(ref CachedExtentMap emap, inout(void)*[] worklist,
 	               PageDescriptor* pds) shared {
 		assert(worklist.length > 0, "Worklist is empty!");
 		assert(pds[0].arenaIndex == index, "Erroneous arena index!");

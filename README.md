@@ -13,7 +13,7 @@ DMD master (2.111 base)
 ## Progress so far
 
 - d.sync is ported, uses core.atomic for building locks. Unittests passing.
-- d.gc modules are in progress (26/37):
+- d.gc modules are in progress (27/37):
 - [X] allocclass.d
 - [X] arena.d
 - [X] base.d
@@ -44,7 +44,7 @@ DMD master (2.111 base)
 - [X] slab.d
 - [X] spec.d
 - [X] stack.d
-- [ ] tbin.d
+- [X] tbin.d
 - [ ] tcache.d
 - [ ] thread.d
 - [X] time.d
