@@ -1,5 +1,4 @@
 module d.gc.hooks;
-version(none):
 
 import d.gc.types;
 
@@ -13,6 +12,10 @@ void __sd_gc_post_suspend_hook();
 void __sd_gc_pre_stop_the_world_hook();
 void __sd_gc_post_restart_the_world_hook();
 
-void __sd_gc_finalize(void* ptr, size_t usedSpace, void* finalizer);
+void __sd_gc_finalize(void* ptr, size_t usedSpace, void* finalizer)
+{
+	// TODO: implement this when the class is added.
+	pragma(msg, "implement finalize function");
+}
 
 void __sd_gc_register_global_segments();

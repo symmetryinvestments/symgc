@@ -819,8 +819,8 @@ private:
 			auto metadata = SlotMetadata.fromBlock(ptr, slotSize);
 			auto finalizer = metadata.finalizer;
 			if (finalizer) {
-				//import d.gc.hooks;
-				//__sd_gc_finalize(ptr, slotSize - metadata.freeSpace, finalizer);
+				import d.gc.hooks;
+				__sd_gc_finalize(ptr, slotSize - metadata.freeSpace, finalizer);
 			}
 
 			toFinalize &= (toFinalize - 1);
@@ -966,9 +966,8 @@ private:
 					// We have not marked this extent this cycle.
 					auto f = e.finalizer;
 					if (f !is null) {
-						pragma(msg, "implement finalize function");
-						//import d.gc.hooks;
-						//__sd_gc_finalize(e.address, e.usedCapacity, f);
+						import d.gc.hooks;
+						__sd_gc_finalize(e.address, e.usedCapacity, f);
 					}
 
 					deadExtents.insert(e);
