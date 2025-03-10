@@ -1,7 +1,6 @@
 module d.gc.time;
-version(none):
 
-import core.stdc.time;
+import core.sys.posix.time;
 
 enum ulong Microsecond = 10;
 enum ulong Millisecond = 1000 * Microsecond;
