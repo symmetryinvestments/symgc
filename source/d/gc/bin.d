@@ -1,5 +1,4 @@
 module d.gc.bin;
-version(none):
 
 import d.gc.arena;
 import d.gc.emap;
@@ -7,7 +6,7 @@ import d.gc.page;
 import d.gc.slab;
 import d.gc.spec;
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
 
 /**
  * A bin is used to keep track of runs of a certain
@@ -121,7 +120,7 @@ struct Bin {
 		goto Refill;
 	}
 
-	uint batchFree(const(void*)[] worklist, PageDescriptor* pds,
+	uint batchFree(const(void)*[] worklist, PageDescriptor* pds,
 	               Extent** dallocSlabs, ref uint ndalloc) shared {
 		mutex.lock();
 		scope(exit) mutex.unlock();
@@ -131,7 +130,7 @@ struct Bin {
 	}
 
 private:
-	uint batchFreeImpl(const(void*)[] worklist, PageDescriptor* pds,
+	uint batchFreeImpl(const(void)*[] worklist, PageDescriptor* pds,
 	                   Extent** dallocSlabs, ref uint ndalloc) {
 		// FIXME: in contract.
 		assert(mutex.isHeld(), "Mutex not held!");

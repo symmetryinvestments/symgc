@@ -1,36 +1,25 @@
 module d.gc.arena;
 
-// NOTE: The following code is a shim to allow emap.d to build and test. Once
-// arena is enabled, this should be removed.
-
-struct Arena {
-	static getInitialized(size_t idx) {
-		return Arena();
-	}
-}
-
-version(none):
-
 import d.gc.emap;
 import d.gc.extent;
 import d.gc.size;
 import d.gc.sizeclass;
 import d.gc.spec;
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
 
 struct Arena {
 private:
 	ulong bits;
 
 	import d.gc.bin;
-	Bin[BinCount] bins;
+	package Bin[BinCount] bins;
 
 	import d.gc.page;
-	PageFiller filler;
+	package PageFiller filler;
 
 	import d.gc.base;
-	Base base;
+	package Base base;
 
 	enum InitializedBit = 1UL << 63;
 
@@ -45,7 +34,7 @@ private:
 	}
 
 	@property
-	uint index() shared {
+	package uint index() shared {
 		return bits & ArenaMask;
 	}
 
@@ -152,11 +141,12 @@ public:
 			.batchAllocate(&filler, emap, sizeClass, top, bottom, slotSize);
 	}
 
-	uint batchFree(ref CachedExtentMap emap, const(void*)[] worklist,
+	uint batchFree(ref CachedExtentMap emap, const(void)*[] worklist,
 	               PageDescriptor* pds) shared {
 		assert(worklist.length > 0, "Worklist is empty!");
 		assert(pds[0].arenaIndex == index, "Erroneous arena index!");
 
+		import core.stdc.stdlib : alloca;
 		auto dallocSlabs = cast(Extent**) alloca(worklist.length * PointerSize);
 
 		uint ndalloc = 0;

@@ -10,7 +10,6 @@ import d.gc.spec;
 import d.gc.util;
 
 import sdcgc.intrinsics;
-import core.builtins;
 
 alias ClassTree = RBTree!(Region, classAddrRegionCmp, "rbClass");
 alias RangeTree = RBTree!(Region, addrRangeRegionCmp, "rbRange");
@@ -51,7 +50,7 @@ enum MinimumBlockCollectThreshold = 8;
 
 struct RegionAllocator {
 private:
-	shared(Base)* base;
+	package shared(Base)* base;
 
 	import d.sync.mutex;
 	Mutex mutex;

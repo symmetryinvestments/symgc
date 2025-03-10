@@ -107,7 +107,7 @@ public:
 }
 
 struct PageDescriptor {
-private:
+package:
 	/**
 	 * The extent itself is 7 bits aligned and the address space 48 bits.
 	 * This leaves us with the low 7 bits and the high 16 bits of the extent's
@@ -124,7 +124,6 @@ private:
 	 */
 	ulong data;
 
-package:
 	this(ulong data) {
 		this.data = data;
 	}

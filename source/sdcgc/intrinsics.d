@@ -1,6 +1,7 @@
 module sdcgc.intrinsics;
 
 public import core.bitop : bsr, bsf, popcnt, bswap;
+public import core.builtins : likely, unlikely;
 
 // TODO: Change all uses of countLeadingZeros to bsr directly
 auto countLeadingZeros(T)(T x) {

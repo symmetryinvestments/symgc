@@ -1,5 +1,4 @@
 module d.gc.page;
-version(none):
 
 import d.gc.allocclass;
 import d.gc.arena;
@@ -10,11 +9,11 @@ import d.gc.size;
 import d.gc.spec;
 import d.gc.util;
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
 
 struct PageFiller {
 private:
-	@property
+	@property package
 	shared(Arena)* arena() shared {
 		auto a = cast(Arena*) null;
 		auto offset = cast(size_t) &(a.filler);
@@ -67,7 +66,7 @@ private:
 	shared Base base;
 
 	import d.gc.region;
-	shared(RegionAllocator)* regionAllocator;
+	package shared(RegionAllocator)* regionAllocator;
 
 public:
 	/**
@@ -744,7 +743,7 @@ private:
 				import d.gc.sizeclass;
 				if (ec.supportsInlineMarking) {
 					import d.gc.bitmap;
-					auto bmp = cast(Bitmap!128*) &e.slabMetadataMarks;
+					auto bmp = cast(Bitmap!128*) &e.slabMetadataMarks();
 					bmp.clear();
 					continue;
 				}
@@ -820,8 +819,8 @@ private:
 			auto metadata = SlotMetadata.fromBlock(ptr, slotSize);
 			auto finalizer = metadata.finalizer;
 			if (finalizer) {
-				import d.gc.hooks;
-				__sd_gc_finalize(ptr, slotSize - metadata.freeSpace, finalizer);
+				//import d.gc.hooks;
+				//__sd_gc_finalize(ptr, slotSize - metadata.freeSpace, finalizer);
 			}
 
 			toFinalize &= (toFinalize - 1);
@@ -877,22 +876,22 @@ private:
 				uint count = 0;
 				ulong occupancyMask = 0;
 
-				foreach (i; 0 .. nimble) {
-					auto oldOccupancy = e.slabData.rawContent[i];
-					auto newOccupancy = oldOccupancy & bmp[i];
+				foreach (j; 0 .. nimble) {
+					auto oldOccupancy = e.slabData.rawContent[j];
+					auto newOccupancy = oldOccupancy & bmp[j];
 
 					occupancyMask |= newOccupancy;
 					auto evicted = oldOccupancy ^ newOccupancy;
 					count += popCount(evicted);
 
-					scope(success) e.slabData.rawContent[i] = newOccupancy;
+					scope(success) e.slabData.rawContent[j] = newOccupancy;
 
 					if (!ec.supportsMetadata) {
 						continue;
 					}
 
-					auto metadataFlags = e.slabMetadataFlags.rawContent[i];
-					finalizeSlabNimble(evicted, metadataFlags, sc, e, i);
+					auto metadataFlags = e.slabMetadataFlags.rawContent[j];
+					finalizeSlabNimble(evicted, metadataFlags, sc, e, j);
 				}
 
 				// The slab is empty.
@@ -967,8 +966,9 @@ private:
 					// We have not marked this extent this cycle.
 					auto f = e.finalizer;
 					if (f !is null) {
-						import d.gc.hooks;
-						__sd_gc_finalize(e.address, e.usedCapacity, f);
+						pragma(msg, "implement finalize function");
+						//import d.gc.hooks;
+						//__sd_gc_finalize(e.address, e.usedCapacity, f);
 					}
 
 					deadExtents.insert(e);

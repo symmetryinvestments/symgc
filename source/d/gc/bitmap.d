@@ -21,7 +21,7 @@ public:
 	}
 
 	@property
-	ref const(shared(ulong[NimbleCount])) rawContent() shared {
+	ref shared(ulong[NimbleCount]) rawContent() shared {
 		return bits;
 	}
 

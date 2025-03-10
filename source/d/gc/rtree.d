@@ -6,7 +6,6 @@ import d.gc.spec;
 import d.sync.atomic;
 
 import sdcgc.intrinsics;
-import core.builtins;
 
 static assert(LgAddressSpace <= 48, "Address space too large!");
 

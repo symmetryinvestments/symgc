@@ -105,7 +105,7 @@ private:
 	 * 63    56 55    48 47    40 39    32 31    24 23    16 15     8 7      0
 	 * nnnnnnnn nnnnnnnn pppppppp pppppppp pppppppp pppppppp ppppaaaa aaaaaaaa
 	 */
-	ulong bits;
+	package ulong bits;
 
 	// Verify our assumptions.
 	static assert(LgAddressSpace <= 48, "Address space too large!");
@@ -113,7 +113,7 @@ private:
 
 	// Useful constants for bit manipulations.
 	enum FreeSlotsIndex = 48;
-	enum FreeSlotsUnit = 1UL << FreeSlotsIndex;
+	package enum FreeSlotsUnit = 1UL << FreeSlotsIndex;
 
 public:
 	uint _npages;
