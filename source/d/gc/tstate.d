@@ -1,7 +1,6 @@
 module d.gc.tstate;
-version(none):
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
 
 enum SuspendState {
 	// The thread is running as usual.
@@ -202,25 +201,21 @@ private:
 	checkForState(SuspendState.Signaled);
 }
 
+version(unittest)
+private auto runThread(void* delegate() dg) {
+	extern(C) void* function(void*) fptr;
+	fptr = cast(typeof(fptr))dg.funcptr;
+	import core.sys.posix.pthread;
+	pthread_t tid;
+	auto r = pthread_create(&tid, null, fptr, dg.ptr);
+	assert(r == 0, "Failed to create thread!");
+
+	return tid;
+}
+
 @"suspend" unittest {
 	import d.gc.signal;
 	setupSignals();
-
-	static runThread(void* delegate() dg) {
-		static struct Delegate {
-			void* ctx;
-			void* function(void*) fun;
-		}
-
-		auto x = *(cast(Delegate*) &dg);
-
-		import core.stdc.pthread;
-		pthread_t tid;
-		auto r = pthread_create(&tid, null, x.fun, x.ctx);
-		assert(r == 0, "Failed to create thread!");
-
-		return tid;
-	}
 
 	// Make sure to use the state from the thread cache
 	// so signal can find it back when needed.
@@ -229,7 +224,7 @@ private:
 
 	// Depending on the environement the thread runs in,
 	// this may not have been initialized.
-	import core.stdc.pthread;
+	import core.sys.posix.pthread;
 	tc.self = pthread_self();
 
 	ThreadState* s = &tc.state;
@@ -273,7 +268,7 @@ private:
 				mutex.unlock();
 				scope(exit) mutex.lock();
 
-				import sys.posix.sched;
+				import core.sys.posix.sched;
 				sched_yield();
 				continue;
 			}
@@ -289,14 +284,14 @@ private:
 				return step >= nextStep;
 			}
 
-			mutex.waitFor(hasReachedNextStep);
+			mutex.waitFor(&hasReachedNextStep);
 			nextStep = step + 1;
 		}
 
 		return null;
 	}
 
-	auto autoResumeThreadID = runThread(autoResume);
+	auto autoResumeThreadID = runThread(&autoResume);
 	scope(exit) {
 		setMustStop();
 

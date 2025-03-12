@@ -1,4 +1,18 @@
 module d.gc.tcache;
+// Temporary impl
+
+struct ThreadCache {
+	import d.gc.tstate;
+	ThreadState state;
+
+	import core.sys.posix.pthread;
+	pthread_t self;
+
+	void *stackTop;
+}
+
+ThreadCache threadCache;
+
 version(none):
 
 import d.gc.base;

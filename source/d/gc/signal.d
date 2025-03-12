@@ -1,22 +1,14 @@
 module d.gc.signal;
 
+import d.gc.tcache;
+import d.gc.tstate;
+
 import core.sys.posix.signal;
 
-// TODO: these should be in core.sys.posix.signal
 // Power failure imminent.
 enum SIGPWR = 30;
 // CPU time limit exceeded.
 enum SIGXCPU = 24;
-
-enum SIGSUSPEND = SIGPWR;
-enum SIGRESUME = SIGXCPU;
-
-version(none):
-
-import d.gc.tcache;
-import d.gc.tstate;
-
-import core.stdc.signal;
 
 enum SIGSUSPEND = SIGPWR;
 enum SIGRESUME = SIGXCPU;
@@ -26,7 +18,7 @@ void setupSignals() {
 	initSuspendSigSet(&action.sa_mask);
 
 	action.sa_flags = SA_RESTART | SA_SIGINFO;
-	action.sa_sigaction = __sd_gc_signal_suspend;
+	action.sa_sigaction = &__sd_gc_signal_suspend;
 
 	if (sigaction(SIGSUSPEND, &action, null) != 0) {
 		import core.stdc.stdlib, core.stdc.stdio;
@@ -35,7 +27,7 @@ void setupSignals() {
 	}
 
 	action.sa_flags = SA_RESTART;
-	action.sa_handler = __sd_gc_signal_resume;
+	action.sa_handler = &__sd_gc_signal_resume;
 
 	if (sigaction(SIGRESUME, &action, null) != 0) {
 		import core.stdc.stdlib, core.stdc.stdio;
@@ -69,7 +61,16 @@ void suspendThreadFromSignal(ThreadState* ts) {
 	 * In addition, we do not need to mask the resume signal, because
 	 * the signal handler should do that for us already.
 	 */
-	suspendThreadImpl(ts);
+
+	// TODO: we are currently using the stack shell just to get the stack top,
+	// even though we already have the registers saved. This may be able to be
+	// trimmed in the future, but scanning the registers twice isn't a huge
+	// deal.
+	import sdcgc.rt;
+	void call(void* stackTop) {
+		suspendThreadImpl(ts, stackTop);
+	}
+	__sd_gc_push_registers(&call);
 }
 
 void suspendThreadDelayed(ThreadState* ts) {
@@ -95,8 +96,11 @@ void suspendThreadDelayed(ThreadState* ts) {
 	 * Make sure to call __sd_gc_push_registers to make sure data
 	 * in trash register will be scanned apropriately by the GC.
 	 */
-	import d.gc.stack;
-	__sd_gc_push_registers(ts.suspendThreadImpl);
+	import sdcgc.rt;
+	void call(void* stackTop) {
+		suspendThreadImpl(ts, stackTop);
+	}
+	__sd_gc_push_registers(&call);
 }
 
 private:
@@ -120,10 +124,7 @@ void initSuspendSigSet(sigset_t* set) {
 	}
 }
 
-void suspendThreadImpl(ThreadState* ts) {
-	import sdc.intrinsics;
-	auto stackTop = readFramePointer();
-
+void suspendThreadImpl(ThreadState* ts, void* stackTop) {
 	threadCache.stackTop = stackTop;
 	scope(exit) threadCache.stackTop = null;
 
@@ -158,7 +159,7 @@ void suspendThreadImpl(ThreadState* ts) {
 
 extern(C) void __sd_gc_signal_suspend(int sig, siginfo_t* info, void* context) {
 	// Make sure errno is preserved.
-	import core.stdc.errno_;
+	import core.stdc.errno;
 	auto oldErrno = errno;
 	scope(exit) errno = oldErrno;
 
@@ -168,7 +169,7 @@ extern(C) void __sd_gc_signal_suspend(int sig, siginfo_t* info, void* context) {
 
 extern(C) void __sd_gc_signal_resume(int sig) {
 	// Make sure errno is preserved.
-	import core.stdc.errno_;
+	import core.stdc.errno;
 	auto oldErrno = errno;
 	scope(exit) errno = oldErrno;
 
