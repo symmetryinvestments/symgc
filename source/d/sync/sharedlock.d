@@ -9,7 +9,8 @@ import d.sync.mutex;
  * existing holders can unlock.
  */
 struct SharedLock {
-private:
+// TODO: this should be private.
+package(d):
 	shared Mutex mutex;
 	size_t count;
 	enum Exclusive = size_t(1) << (size_t.sizeof * 8 - 1);

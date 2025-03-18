@@ -1,17 +1,16 @@
 module d.gc.fork;
-version(none):
 
-import core.stdc.pthread;
+import core.sys.posix.pthread;
 
 void setupFork() {
-	if (pthread_atfork(prepare, parent, child) != 0) {
+	if (pthread_atfork(&prepare, &parent, &child) != 0) {
 		import core.stdc.stdlib, core.stdc.stdio;
 		printf("pthread_atfork failed!");
 		exit(1);
 	}
 }
 
-void prepare() {
+extern(C) void prepare() {
 	/**
 	 * Before forking, we want to take all the locks.
 	 * This ensures that no other thread holds on GC
@@ -31,12 +30,12 @@ void prepare() {
 	collectorPrepareForFork();
 }
 
-void parent() {
+extern(C) void parent() {
 	import d.gc.collector;
 	collectorPostForkParent();
 }
 
-void child() {
+extern(C) void child() {
 	import d.gc.collector;
 	collectorPostForkChild();
 }

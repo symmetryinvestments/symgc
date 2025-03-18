@@ -1,5 +1,4 @@
 module d.gc.collector;
-version(none):
 
 import d.gc.arena;
 import d.gc.emap;
@@ -57,7 +56,7 @@ private:
 		prepareGCCycle();
 
 		import d.gc.scanner;
-		shared(Scanner) scanner = Scanner(gcCycle, managedAddressSpace);
+		shared(Scanner) scanner = cast(shared)Scanner(gcCycle, managedAddressSpace);
 
 		// Go on and on until all worklists are empty.
 		scanner.mark();

@@ -1,19 +1,11 @@
 module d.gc.stack;
-version(none):
 
 import d.gc.types;
-
-version(OSX) {
-	// For some reason OSX's symbol get a _ prepended.
-	extern(C) void _sd_gc_push_registers(void delegate());
-	alias __sd_gc_push_registers = _sd_gc_push_registers;
-} else {
-	extern(C) void __sd_gc_push_registers(void delegate());
-}
+import sdcgc.rt;
 
 void scanStack(ScanDg scan) {
 	auto ts = ThreadScanner(scan);
-	__sd_gc_push_registers(ts.scanStack);
+	__sd_gc_push_registers(&ts.scanStack);
 }
 
 private:
@@ -25,10 +17,7 @@ struct ThreadScanner {
 		this.scan = scan;
 	}
 
-	void scanStack() {
-		import sdc.intrinsics;
-		auto top = readFramePointer();
-
+	void scanStack(void* top) {
 		import d.gc.tcache;
 		auto bottom = threadCache.stackBottom;
 

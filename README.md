@@ -13,20 +13,20 @@ DMD master (2.111 base)
 ## Progress so far
 
 - d.sync is ported, uses core.atomic for building locks. Unittests passing.
-- d.gc modules are in progress (29/37):
+- d.gc modules are in progress (36/37):
 - [X] allocclass.d
 - [X] arena.d
 - [X] base.d
 - [X] bin.d
 - [X] bitmap.d
 - [X] block.d
-- [ ] capi.d
-- [ ] collector.d
+- [X] capi.d
+- [X] collector.d
 - [X] cpu.d
 - [X] emap.d
 - [X] extent.d
-- [ ] fork.d
-- [ ] global.d
+- [X] fork.d
+- [X] global.d
 - [X] heap.d
 - [ ] hooks.d - stubs added, need to fill these in.
 - [X] memmap.d
@@ -37,7 +37,7 @@ DMD master (2.111 base)
 - [X] region.d
 - [X] ring.d
 - [X] rtree.d
-- [ ] scanner.d
+- [X] scanner.d
 - [X] signal.d
 - [X] size.d
 - [X] sizeclass.d
@@ -45,8 +45,8 @@ DMD master (2.111 base)
 - [X] spec.d
 - [X] stack.d
 - [X] tbin.d
-- [ ] tcache.d
-- [ ] thread.d
+- [X] tcache.d
+- [X] thread.d
 - [X] time.d
 - [X] tstate.d
 - [X] types.d
@@ -56,8 +56,8 @@ NOTE: The above being checked doesn't mean it's fully tested. Just that it passe
 
 ## Todo
 
-- Finish porting all GC modules
-- Integration tests
+- [X] Finish porting all GC modules
+- [ ] Integration tests
 
 ## Acknowledgements
 

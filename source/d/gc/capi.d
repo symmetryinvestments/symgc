@@ -1,5 +1,4 @@
 module d.gc.capi;
-version(none):
 
 import d.gc.tcache;
 

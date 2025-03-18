@@ -1,19 +1,4 @@
 module d.gc.tcache;
-// Temporary impl
-
-struct ThreadCache {
-	import d.gc.tstate;
-	ThreadState state;
-
-	import core.sys.posix.pthread;
-	pthread_t self;
-
-	void *stackTop;
-}
-
-ThreadCache threadCache;
-
-version(none):
 
 import d.gc.base;
 import d.gc.emap;
@@ -25,7 +10,7 @@ import d.gc.spec;
 import d.gc.tbin;
 import d.gc.util;
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
 
 enum DefaultEventWait = 65536;
 
@@ -36,6 +21,11 @@ alias ThreadRing = Ring!ThreadCache;
 
 ThreadCache threadCache;
 
+version(linux) {
+	import core.sys.posix.unistd: pid_t;
+	extern(C) pid_t gettid();
+}
+
 struct ThreadCache {
 private:
 	size_t allocated;
@@ -43,7 +33,7 @@ private:
 	size_t deallocated;
 	size_t nextDeallocationEvent;
 
-	CachedExtentMap emap;
+	package CachedExtentMap emap;
 
 	/**
 	 * The bins themselves.
@@ -68,19 +58,19 @@ private:
 	uint associatedArena;
 
 	import d.gc.tstate;
-	ThreadState state;
+	package ThreadState state;
 
-	import core.stdc.pthread;
-	pthread_t self;
+	import core.sys.posix.pthread;
+	package pthread_t self;
 
-	import sys.posix.types;
-	pid_t tid;
+	import core.sys.posix.sys.types;
+	package pid_t tid;
 
 	RNode rnode;
 
-	void* stackBottom;
-	void* stackTop;
-	const(void*)[][] tlsSegments;
+	package void* stackBottom;
+	package void* stackTop;
+	package const(void*)[][] tlsSegments;
 
 	/**
 	 * track GC runs.
@@ -130,7 +120,8 @@ public:
 		 * You'd think linux would provide a way to get the tid from
 		 * a pthread_t, and if, so, you'd be wrong! So we need to cache it.
 		 */
-		import core.stdc.unistd;
+		//import core.sys.linux.unistd;
+		// NOTE: not included in druntime so we have to define it locally
 		tid = gettid();
 
 		nextAllocationEvent = DefaultEventWait;
@@ -156,7 +147,7 @@ public:
 		reassociateArena(true);
 
 		// Because this may allocate, we do it last.
-		import d.rt.elf;
+		import sdcgc.rt;
 		stackBottom = getStackBottom();
 	}
 
@@ -349,6 +340,7 @@ public:
 			npd.extent.setUsedCapacity(size);
 		}
 
+		import core.stdc.string : memcpy;
 		memcpy(newPtr, ptr, copySize);
 		free(pd, ptr);
 
@@ -382,6 +374,7 @@ private:
 		}
 
 		if (unlikely(zero)) {
+			import core.stdc.string : memset;
 			memset(ptr, 0, slotSize);
 		}
 
@@ -445,6 +438,7 @@ private:
 
 		// If the allocation contains pointers, zero it before freeing it
 		if (ShouldZeroFreeSlabs && pd.containsPointers) {
+			import core.stdc.string : memset;
 			memset(ptr, 0, slotSize);
 		}
 
@@ -640,7 +634,7 @@ private:
 	/**
 	 * TLS registration.
 	 */
-	void addTLSSegment(const void[] range) {
+	package void addTLSSegment(const void[] range) {
 		auto ptr = cast(void*) tlsSegments.ptr;
 		auto index = tlsSegments.length;
 		auto length = index + 1;
@@ -795,7 +789,7 @@ private:
 		 * of glibc thanks to rseqs, but we might want to find
 		 * an alternative on other systems.
 		 */
-		import sys.posix.sched;
+		import core.sys.linux.sched;
 		return sched_getcpu();
 	}
 

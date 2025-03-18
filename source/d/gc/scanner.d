@@ -1,7 +1,6 @@
 module d.gc.scanner;
-version(none):
 
-import sdc.intrinsics;
+import sdcgc.intrinsics;
 
 import d.gc.emap;
 import d.gc.hooks;
@@ -52,13 +51,14 @@ public:
 	}
 
 	void mark() shared {
-		import core.stdc.pthread;
+		import core.sys.posix.pthread;
 		auto threadCount = activeThreads - 1;
+		import core.stdc.stdlib : alloca;
 		auto threadsPtr =
 			cast(pthread_t*) alloca(pthread_t.sizeof * threadCount);
 		auto threads = threadsPtr[0 .. threadCount];
 
-		static void* markThreadEntry(void* ctx) {
+		static extern(C) void* markThreadEntry(void* ctx) {
 			import d.gc.tcache;
 			threadCache.activateGC(false);
 
@@ -68,12 +68,14 @@ public:
 
 		// First thing, start the worker threads, so they can do work ASAP.
 		foreach (ref tid; threads) {
-			import d.rt.trampoline;
-			createGCThread(&tid, null, markThreadEntry, cast(void*) &this);
+			import sdcgc.trampoline;
+			createGCThread(&tid, null, &markThreadEntry, cast(void*) &this);
 		}
 
 		// Scan the roots.
-		__sd_gc_global_scan(addToWorkList);
+		// TODO: this cast is awful, see if we can fix this.
+		void delegate(const(void*)[]) shared atwl = &addToWorkList;
+		__sd_gc_global_scan(cast(void delegate(const(void*)[]))atwl);
 
 		// Now send this thread marking!
 		runMark();
@@ -138,7 +140,7 @@ private:
 		 * This is NOT good! So we scan here to make sure we don't miss anything.
 		 */
 		import d.gc.thread;
-		threadScan(worker.scan);
+		threadScan(&worker.scan);
 
 		WorkItem[MaxRefill] refill;
 		while (true) {
@@ -158,7 +160,8 @@ private:
 		mutex.lock();
 		scope(exit) mutex.unlock();
 
-		activeThreads--;
+		auto w = (cast(Scanner*) &this);
+		w.activeThreads--;
 
 		/**
 		 * We wait for work to be present in the worklist.
@@ -168,18 +171,17 @@ private:
 		 * of active thread is 0, then we know no more work is coming
 		 * and we should stop.
 		 */
-		static hasWork(Scanner* w) {
+		auto hasWork() {
 			return w.cursor != 0 || w.activeThreads == 0;
 		}
 
-		auto w = (cast(Scanner*) &this);
-		mutex.waitFor(w.hasWork);
+		mutex.waitFor(&hasWork);
 
 		if (w.cursor == 0) {
 			return 0;
 		}
 
-		activeThreads++;
+		w.activeThreads++;
 
 		uint count = 1;
 		uint top = w.cursor;
@@ -314,9 +316,9 @@ public:
 		WorkItem[WorkListCapacity] worklist;
 
 		while (true) {
-			auto range = item.range;
-			auto current = range.ptr;
-			auto top = current + range.length;
+			auto r = item.range;
+			auto current = r.ptr;
+			auto top = current + r.length;
 
 			for (; current < top; current++) {
 				auto ptr = *current;

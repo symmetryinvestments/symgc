@@ -1,5 +1,4 @@
 module d.gc.thread;
-version(none):
 
 import d.gc.capi;
 import d.gc.tcache;
@@ -21,7 +20,7 @@ void createProcess() {
 	import d.gc.hooks;
 	__sd_gc_register_global_segments();
 
-	import d.rt.elf;
+	import sdcgc.rt;
 	registerTlsSegments();
 }
 
@@ -37,7 +36,7 @@ void createThread(bool AllowStopTheWorld)() {
 
 	initThread();
 
-	import d.rt.elf;
+	import sdcgc.rt;
 	registerTlsSegments();
 }
 
@@ -191,14 +190,14 @@ public:
 		uint count;
 
 		while (suspendRunningThreads(count++)) {
-			import sys.posix.sched;
+			import core.sys.posix.sched;
 			sched_yield();
 		}
 	}
 
 	void restartTheWorld() shared {
 		while (resumeSuspendedThreads()) {
-			import sys.posix.sched;
+			import core.sys.posix.sched;
 			sched_yield();
 		}
 

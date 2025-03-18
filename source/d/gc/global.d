@@ -1,5 +1,4 @@
 module d.gc.global;
-version(none):
 
 import d.gc.tcache;
 import d.gc.types;
