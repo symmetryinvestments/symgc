@@ -1,0 +1,9 @@
+{
+	"authors": [
+		"Steven Schveighoffer"
+	],
+	"copyright": "Copyright © 2025, Steven Schveighoffer",
+	"description": "Test harness for integration tests",
+	"license": "MIT",
+	"name": "tester"
+}
