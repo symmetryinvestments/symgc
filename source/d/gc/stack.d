@@ -1,7 +1,7 @@
 module d.gc.stack;
 
 import d.gc.types;
-import sdcgc.rt;
+import symgc.rt;
 
 void scanStack(ScanDg scan) {
 	auto ts = ThreadScanner(scan);

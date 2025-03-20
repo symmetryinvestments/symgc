@@ -5,7 +5,7 @@ import d.gc.emap;
 import d.gc.sizeclass;
 import d.gc.spec;
 
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 /**
  * Some thread cache configuration parameters.

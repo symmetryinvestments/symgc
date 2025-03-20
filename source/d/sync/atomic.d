@@ -1,7 +1,7 @@
 module d.sync.atomic;
 
 import drta = core.atomic;
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 enum MemoryOrder : drta.MemoryOrder {
 	Relaxed = drta.MemoryOrder.raw,

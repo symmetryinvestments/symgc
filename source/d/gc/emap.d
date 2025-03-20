@@ -6,7 +6,7 @@ import d.gc.rtree;
 import d.gc.spec;
 import d.gc.util;
 
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 shared ExtentMap gExtentMap;
 

@@ -381,12 +381,11 @@ public:
 			enum NimbleSize = 8 * ulong.sizeof;
 			auto shift = n * NimbleSize;
 
-			import sdcgc.intrinsics;
+			import symgc.intrinsics;
 			uint count = popCount(current);
 			count = min(count, nfill);
 
 			foreach (_; 0 .. count) {
-				import sdcgc.intrinsics;
 				auto bit = countTrailingZeros(current);
 				current ^= 1UL << bit;
 

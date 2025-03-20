@@ -148,7 +148,7 @@ public:
 			return;
 		}
 
-		import sdcgc.intrinsics;
+		import symgc.intrinsics;
 		uint nmerge = countTrailingZeros(auxcount);
 		bool done = false;
 		for (uint i = 0; i < nmerge && !done; i++) {
@@ -576,7 +576,7 @@ struct Link(N, string NodeName) {
 		heap.insert(n);
 		heap.checkIntegrity();
 
-		import sdcgc.intrinsics;
+		import symgc.intrinsics;
 		assert(computeAuxLength() == popCount(i));
 	}
 

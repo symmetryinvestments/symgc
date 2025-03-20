@@ -20,7 +20,7 @@ void createProcess() {
 	import d.gc.hooks;
 	__sd_gc_register_global_segments();
 
-	import sdcgc.rt;
+	import symgc.rt;
 	registerTlsSegments();
 }
 
@@ -36,7 +36,7 @@ void createThread(bool AllowStopTheWorld)() {
 
 	initThread();
 
-	import sdcgc.rt;
+	import symgc.rt;
 	registerTlsSegments();
 }
 

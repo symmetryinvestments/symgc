@@ -1,4 +1,4 @@
-module sdcgc.trampoline;
+module symgc.trampoline;
 
 import d.gc.capi;
 import d.gc.thread;

@@ -9,7 +9,7 @@ import d.gc.rbtree;
 import d.gc.spec;
 import d.gc.util;
 
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 alias ClassTree = RBTree!(Region, classAddrRegionCmp, "rbClass");
 alias RangeTree = RBTree!(Region, addrRangeRegionCmp, "rbRange");

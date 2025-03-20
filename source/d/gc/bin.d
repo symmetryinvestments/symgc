@@ -6,7 +6,7 @@ import d.gc.page;
 import d.gc.slab;
 import d.gc.spec;
 
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 /**
  * A bin is used to keep track of runs of a certain

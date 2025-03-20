@@ -10,7 +10,7 @@ import d.gc.spec;
 import d.gc.tbin;
 import d.gc.util;
 
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 enum DefaultEventWait = 65536;
 
@@ -147,7 +147,7 @@ public:
 		reassociateArena(true);
 
 		// Because this may allocate, we do it last.
-		import sdcgc.rt;
+		import symgc.rt;
 		stackBottom = getStackBottom();
 	}
 

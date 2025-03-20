@@ -1,6 +1,6 @@
 module d.gc.scanner;
 
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 import d.gc.emap;
 import d.gc.hooks;
@@ -68,7 +68,7 @@ public:
 
 		// First thing, start the worker threads, so they can do work ASAP.
 		foreach (ref tid; threads) {
-			import sdcgc.trampoline;
+			import symgc.trampoline;
 			createGCThread(&tid, null, &markThreadEntry, cast(void*) &this);
 		}
 

@@ -6,7 +6,7 @@ import d.gc.size;
 import d.gc.sizeclass;
 import d.gc.spec;
 
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 struct Arena {
 private:

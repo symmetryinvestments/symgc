@@ -2,7 +2,7 @@ module d.gc.bitmap;
 
 import d.gc.util;
 
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 struct Bitmap(uint N) {
 private:

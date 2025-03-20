@@ -27,7 +27,7 @@ ubyte log2floor(T)(T x) {
 		return 0;
 	}
 
-	import sdcgc.intrinsics;
+	import symgc.intrinsics;
 	enum S = T.sizeof * 8;
 	// return (S - countLeadingZeros(x) - 1) & 0xff;
 	return bsr(x) & 0xff;
@@ -48,7 +48,7 @@ ubyte log2floor(T)(T x) {
 }
 
 bool isPow2(T)(T x) {
-	import sdcgc.intrinsics;
+	import symgc.intrinsics;
 	return popCount(x) == 1;
 }
 

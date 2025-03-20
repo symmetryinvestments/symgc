@@ -1,4 +1,4 @@
-module sdcgc.intrinsics;
+module symgc.intrinsics;
 
 public import core.bitop : bsr, bsf, popcnt, bswap;
 public import core.builtins : likely, unlikely;

@@ -1,6 +1,6 @@
 module d.gc.tstate;
 
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 enum SuspendState {
 	// The thread is running as usual.

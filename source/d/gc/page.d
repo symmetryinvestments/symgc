@@ -9,7 +9,7 @@ import d.gc.size;
 import d.gc.spec;
 import d.gc.util;
 
-import sdcgc.intrinsics;
+import symgc.intrinsics;
 
 struct PageFiller {
 private:

@@ -66,7 +66,7 @@ void suspendThreadFromSignal(ThreadState* ts) {
 	// even though we already have the registers saved. This may be able to be
 	// trimmed in the future, but scanning the registers twice isn't a huge
 	// deal.
-	import sdcgc.rt;
+	import symgc.rt;
 	void call(void* stackTop) {
 		suspendThreadImpl(ts, stackTop);
 	}
@@ -96,7 +96,7 @@ void suspendThreadDelayed(ThreadState* ts) {
 	 * Make sure to call __sd_gc_push_registers to make sure data
 	 * in trash register will be scanned apropriately by the GC.
 	 */
-	import sdcgc.rt;
+	import symgc.rt;
 	void call(void* stackTop) {
 		suspendThreadImpl(ts, stackTop);
 	}
