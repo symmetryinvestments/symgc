@@ -46,19 +46,29 @@ void unpin(size_t blk) {
 	__sd_gc_remove_roots(cast(void*) ~blk);
 }
 
+void prepareStack() {
+	static void clobber() {
+		size_t[1024] arr;
+		import core.stdc.string;
+		memset(arr.ptr, 0xff, arr.sizeof);
+	}
+	__sd_gc_tl_flush_cache();
+	clobber();
+}
+
 void main() {
 	import d.gc.thread;
 	createProcess();
 	auto blk = allocate(false);
-	__sd_gc_tl_flush_cache();
+	prepareStack();
 	__sd_gc_collect();
 	assert(finalizerCalled == 1, "Finalizer not called when unpinned.");
 	blk = allocate(true);
-	__sd_gc_tl_flush_cache();
+	prepareStack();
 	__sd_gc_collect();
 	assert(finalizerCalled == 1, "Finalizer called when pinned.");
 	unpin(blk);
-	__sd_gc_tl_flush_cache();
+	prepareStack();
 	__sd_gc_collect();
 	assert(finalizerCalled == 2, "Finalizer not called after unpinning.");
 }
