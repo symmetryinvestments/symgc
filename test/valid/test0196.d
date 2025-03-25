@@ -27,6 +27,8 @@ struct Link {
 }
 
 void main() {
+	import d.gc.thread;
+	createProcess();
 	// We generate garbage at an alarming rate,
 	// so we do not trigger collection automatically.
 	__sd_gc_tl_activate(false);

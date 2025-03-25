@@ -18,6 +18,8 @@ extern(C) void* __sd_gc_alloc(size_t size);
 extern(C) void __sd_gc_add_roots(const void[] range);
 
 void main() {
+	import d.gc.thread;
+	createProcess();
 	foreach (i; 0 .. 256) {
 		enum BufferSize = 800_000_000;
 

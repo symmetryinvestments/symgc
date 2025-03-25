@@ -3,8 +3,11 @@
 	   "name": "test0199",
 		"dependencies": {
 			"symgc" : {
-				"path" : "../../"
+				"path" : "../../",
 			}
+		},
+		"subConfigurations" : {
+			"symgc": "integration"
 		},
 		"targetPath": "./bin"
    }
@@ -44,6 +47,8 @@ void unpin(size_t blk) {
 }
 
 void main() {
+	import d.gc.thread;
+	createProcess();
 	auto blk = allocate(false);
 	__sd_gc_tl_flush_cache();
 	__sd_gc_collect();

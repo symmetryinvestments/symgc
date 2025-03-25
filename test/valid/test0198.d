@@ -3,8 +3,11 @@
 	   "name": "test0198",
 		"dependencies": {
 			"symgc" : {
-				"path" : "../../"
+				"path" : "../../",
 			}
+		},
+		"subConfigurations" : {
+			"symgc": "integration"
 		},
 		"targetPath": "./bin"
    }
@@ -32,7 +35,7 @@ struct SlabDestructor(size_t size) {
 
 void destroyItem(T)(void* item, size_t size) {
 	assert(size == T.sizeof, "Incorrect size passed to destructor.");
-	(cast(T*) item).__dtor();
+	destroy(*(cast(T*)item));
 }
 
 void allocateItem(size_t S)() {
@@ -86,6 +89,8 @@ void allocateItems() {
 }
 
 void main() {
+	import d.gc.thread;
+	createProcess();
 	// NOTE: the first slab block allocated is never collected, because it
 	// appears on the stack during collection. Until this bug is fixed, consume
 	// the first allocation.

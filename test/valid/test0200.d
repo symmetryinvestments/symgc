@@ -14,7 +14,7 @@
 //T retval:0
 //T desc:GC multithreaded stress test.
 
-import core.stdc.pthread;
+import core.sys.posix.pthread;
 
 extern(C) void __sd_gc_collect();
 extern(C) void* __sd_gc_alloc(size_t size);
@@ -44,17 +44,19 @@ void randomAlloc() {
 	}
 }
 
-void* runThread(void*) {
+extern(C) void* runThread(void*) {
 	randomAlloc();
 	return null;
 }
 
 void main() {
+	import d.gc.thread;
+	createProcess();
 	enum ThreadCount = 4;
 	pthread_t[ThreadCount - 1] tids;
 
 	foreach (ref tid; tids) {
-		pthread_create(&tid, null, runThread, null);
+		pthread_create(&tid, null, &runThread, null);
 	}
 
 	randomAlloc();

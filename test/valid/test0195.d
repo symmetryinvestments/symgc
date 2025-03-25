@@ -19,6 +19,8 @@ extern(C) void* __sd_gc_alloc(size_t size);
 extern(C) void __sd_gc_tl_activate(bool activated);
 
 void main() {
+	import d.gc.thread;
+	createProcess();
 	// We generate garbage at an alarming rate,
 	// so we do not trigger collection automatically.
 	__sd_gc_tl_activate(false);

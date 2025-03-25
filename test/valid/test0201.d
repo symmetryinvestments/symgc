@@ -19,15 +19,15 @@ shared Mutex m1, m2;
 
 extern(C) void __sd_gc_collect();
 
-void* runThread(void*) {
+extern(C) void* runThread(void*) {
 	m2.lock();
 
-	import core.stdc.signal;
+	import core.sys.posix.signal;
 	sigset_t set;
 	sigfillset(&set);
 
 	// Block all signals!
-	import core.stdc.pthread;
+	import core.sys.posix.pthread;
 	pthread_sigmask(SIG_BLOCK, &set, null);
 
 	// Hand over to the main thread.
@@ -41,11 +41,13 @@ void* runThread(void*) {
 }
 
 void main() {
+	import d.gc.thread;
+	createProcess();
 	m1.lock();
 
-	import core.stdc.pthread;
+	import core.sys.posix.pthread;
 	pthread_t tid;
-	pthread_create(&tid, null, runThread, null);
+	pthread_create(&tid, null, &runThread, null);
 
 	// Wait for the thread ot start.
 	m1.lock();
