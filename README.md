@@ -28,7 +28,7 @@ DMD master (2.111 base)
 - [X] fork.d
 - [X] global.d
 - [X] heap.d
-- [ ] hooks.d - stubs added, need to fill these in.
+- [ ] hooks.d - Ported for tests, but needs full integration with druntime to finish
 - [X] memmap.d
 - [X] page.d
 - [X] proc.d
@@ -52,12 +52,15 @@ DMD master (2.111 base)
 - [X] types.d
 - [X] util.d
 
-NOTE: The above being checked doesn't mean it's fully tested. Just that it passes unittests. Integration tests will need to be ported to ensure everything works as expected.
+Integration tests are also ported, and are in the test directory. Only SDC tests that are GC-specific were brought in.
+
+To run, use dub in the test directory.
 
 ## Todo
 
-- [X] Finish porting all GC modules
-- [ ] Integration tests
+- [ ] Add object for including new GC into druntime.
+- [ ] Test with real projects
+- [ ] Remove pthread override, use normal druntime hooks.
 
 ## Acknowledgements
 
