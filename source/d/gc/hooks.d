@@ -9,8 +9,6 @@ extern(C):
 
 void __sd_gc_global_scan(ScanDg scan) {
 	version(testing) {
-		import core.stdc.stdio;
-		printf("doing global scan\n");
 		import d.gc.global;
 		gState.scanRoots(scan);
 

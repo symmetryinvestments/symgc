@@ -6,6 +6,9 @@
 				"path" : "../../"
 			}
 		},
+		"subConfigurations" : {
+			"symgc": "integration"
+		},
 		"targetPath": "./bin"
    }
 +/
