@@ -177,7 +177,10 @@ private:
 
 shared GCState gState;
 
-@"addRootReentrancy" unittest {
+// Note, this unittest is covered completely by integration test 202, and this
+// does not fit well as a unittest since it leaves behind a lot of pinned
+// garbage.
+/+@"addRootReentrancy" unittest {
 	foreach (_; 0 .. 1000) {
 		enum BufferSize = 800_000_000;
 
@@ -186,4 +189,4 @@ shared GCState gState;
 		auto ptr = __sd_gc_alloc(BufferSize);
 		__sd_gc_add_roots(ptr[0 .. BufferSize]);
 	}
-}
+}+/
