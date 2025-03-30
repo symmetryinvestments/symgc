@@ -548,7 +548,7 @@ private:
 	/**
 	 * Appendable facilities.
 	 */
-	size_t getCapacity(const void[] slice) {
+	public size_t getCapacity(const void[] slice) {
 		auto pd = maybeGetPageDescriptor(slice.ptr);
 		auto e = pd.extent;
 		if (e is null) {
@@ -574,7 +574,7 @@ private:
 		return e.size - startIndex;
 	}
 
-	void[] getAllocationSlice(const void* ptr) {
+	public void[] getAllocationSlice(const void* ptr) {
 		auto pd = maybeGetPageDescriptor(ptr);
 		auto e = pd.extent;
 		if (e is null) {
@@ -600,11 +600,11 @@ private:
 		return base[0 .. size];
 	}
 
-	bool extend(const void[] slice, size_t size) {
+	public bool extend(const void[] slice, size_t size) {
 		return resize!true(slice, size);
 	}
 
-	bool reserve(const void[] slice, size_t size) {
+	public bool reserve(const void[] slice, size_t size) {
 		return resize!false(slice, size);
 	}
 
@@ -669,7 +669,7 @@ private:
 	 *
 	 * See also: https://dlang.org/spec/arrays.html#capacity-reserve
 	 */
-	bool validateCapacity(const void[] slice, const void* address,
+	public bool validateCapacity(const void[] slice, const void* address,
 	                      size_t usedCapacity) {
 		// Slice must not end before valid data ends, or capacity is zero.
 		// To be appendable, the slice end must match the alloc's used
@@ -753,7 +753,7 @@ private:
 		return pd;
 	}
 
-	auto maybeGetPageDescriptor(const void* ptr) {
+	package auto maybeGetPageDescriptor(const void* ptr) {
 		auto aptr = alignDown(ptr, PageSize);
 		return emap.lookup(aptr);
 	}

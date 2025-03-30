@@ -1,6 +1,7 @@
 module d.gc.capi;
 
 import d.gc.tcache;
+import d.gc.emap;
 
 extern(C):
 
@@ -80,4 +81,8 @@ void __sd_gc_add_tls_segment(const void[] range) {
 
 void __sd_gc_tl_activate(bool activated) {
 	threadCache.activateGC(activated);
+}
+
+PageDescriptor __sd_gc_maybe_get_page_descriptor(void* ptr) {
+	return threadCache.maybeGetPageDescriptor(ptr);
 }
