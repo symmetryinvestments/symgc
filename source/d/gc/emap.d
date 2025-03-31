@@ -63,8 +63,8 @@ public:
 struct CachedExtentMap {
 private:
 	ExtentMapCache cache;
-	shared(ExtentMap)* emap;
-	shared(Base)* base;
+	package shared(ExtentMap)* emap;
+	package shared(Base)* base;
 
 public:
 	this(shared(ExtentMap)* emap, shared(Base)* base) {

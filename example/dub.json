@@ -1,0 +1,14 @@
+{
+	"authors": [
+		"Steven Schveighoffer"
+	],
+	"copyright": "Copyright © 2025, Steven Schveighoffer",
+	"description": "Example usage of SDC GC",
+	"license": "MIT",
+	"name": "gcexample",
+	"dependencies": {
+		"symgc" : {
+			"path" : "../"
+		}
+	}
+}

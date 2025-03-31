@@ -47,12 +47,6 @@ extern(C) void _d_register_sdc_gc()
 	registerGCFactory("sdcq", &initializeQuiet);
 }
 
-alias ThreadScanFn = extern(C) void function(void *context, void *start, void *end) nothrow;
-
-// copied from core.thread.threadbase
-alias ScanAllThreadsFn = void delegate(void*, void*) nothrow;
-extern (C) void thread_scanAll(scope ScanAllThreadsFn scan) nothrow;
-
 // since all the real work is done in the SDC library, the class is just a
 // shim, and can just be initialized at compile time.
 private __gshared SnazzyGC instance = new SnazzyGC;
