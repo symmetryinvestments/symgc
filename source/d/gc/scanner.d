@@ -156,6 +156,10 @@ private:
 		}
 	}
 
+	auto hasWork() {
+		return cursor != 0 || activeThreads == 0;
+	}
+
 	uint waitForWork(ref WorkItem[MaxRefill] refill) shared {
 		mutex.lock();
 		scope(exit) mutex.unlock();
@@ -171,11 +175,7 @@ private:
 		 * of active thread is 0, then we know no more work is coming
 		 * and we should stop.
 		 */
-		auto hasWork() {
-			return w.cursor != 0 || w.activeThreads == 0;
-		}
-
-		mutex.waitFor(&hasWork);
+		mutex.waitFor(&w.hasWork);
 
 		if (w.cursor == 0) {
 			return 0;

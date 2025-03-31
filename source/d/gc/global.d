@@ -180,13 +180,18 @@ shared GCState gState;
 // Note, this unittest is covered completely by integration test 202, and this
 // does not fit well as a unittest since it leaves behind a lot of pinned
 // garbage.
-/+@"addRootReentrancy" unittest {
-	foreach (_; 0 .. 1000) {
+@"addRootReentrancy" unittest {
+	import d.gc.capi;
+	void*[1000] unpinMe;
+	foreach (i; 0 .. unpinMe.length) {
 		enum BufferSize = 800_000_000;
 
 		// Get the GC close past a collect threshold.
-		import d.gc.capi;
 		auto ptr = __sd_gc_alloc(BufferSize);
 		__sd_gc_add_roots(ptr[0 .. BufferSize]);
+		unpinMe[i] = ptr;
 	}
-}+/
+	foreach(p; unpinMe) {
+		__sd_gc_remove_roots(p);
+	}
+}
