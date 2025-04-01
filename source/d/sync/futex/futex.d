@@ -4,7 +4,7 @@ import d.sync.atomic;
 
 import core.sys.linux.futex;
 import core.stdc.errno;
-import core.builtins: likely, unlikely;
+import symgc.intrinsics: likely, unlikely;
 import core.stdc.config;
 
 extern(C) long syscall(long number, ...);

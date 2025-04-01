@@ -3,7 +3,7 @@ module d.sync.mutex;
 import d.sync.waiter;
 
 import core.sys.posix.sched;
-import core.builtins : likely;
+import symgc.intrinsics : likely;
 
 struct Mutex {
 private:
