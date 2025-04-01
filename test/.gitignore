@@ -9,7 +9,7 @@ tester.dll
 tester.a
 tester.lib
 tester-test-*
-/valid/bin
+/*/bin
 *.exe
 *.pdb
 *.o

@@ -1,7 +1,14 @@
 module symgc.intrinsics;
 
 public import core.bitop : bsr, bsf, popcnt, bswap;
-public import core.builtins : likely, unlikely;
+static if(__traits(compiles, () {import core.builtins : likely, unlikely; })) {
+	public import core.builtins : likely, unlikely;
+}
+else
+{
+	bool likely(bool v) => v;
+	bool unlikely(bool v) => v;
+}
 
 // TODO: Change all uses of countLeadingZeros to bsr directly
 auto countLeadingZeros(T)(T x) {

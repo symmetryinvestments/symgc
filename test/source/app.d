@@ -75,7 +75,7 @@ int main(string[] args)
 				helpInformation.options);
 		return 1;
 	}
-	TestHarness[] tests = dirEntries("valid", SpanMode.shallow)
+	TestHarness[] tests = dirEntries("base", SpanMode.shallow)
 		.filter!(de => de.isFile && de.name.endsWith(".d"))
 		.map!(de => parseTest(de.name))
 		.array;

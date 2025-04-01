@@ -139,7 +139,7 @@ private:
 		}
 
 	Success:
-		scope(success) nextSlot = nextSlot.add(ExtentSize);
+		scope(exit) nextSlot = nextSlot.add(ExtentSize);
 		return nextSlot;
 	}
 

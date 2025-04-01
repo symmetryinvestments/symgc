@@ -15,5 +15,10 @@
 			"targetType": "library",
 			"versions" : ["integrationTests"]
 		}
+	},
+	"buildTypes" : {
+		"unittest-x" : {
+			"buildOptions": ["unittests", "releaseMode", "optimize", "inline"]
+		}
 	}
 }
