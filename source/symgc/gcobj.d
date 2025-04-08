@@ -364,7 +364,7 @@ final class SnazzyGC : GC
 
 	bool expandArrayUsed(void[] slice, size_t newUsed, bool atomic = false) nothrow @trusted
 	{
-		return __sd_gc_hook_extend_array_used(slice.ptr, slice.length, newUsed - slice.length);
+		return __sd_gc_hook_extend_array_used(slice.ptr, newUsed, slice.length);
 	}
 
 	size_t reserveArrayCapacity(void[] slice, size_t request, bool atomic = false) nothrow @trusted
