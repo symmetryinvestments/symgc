@@ -80,9 +80,11 @@ private GC initializeQuiet()
     // check the config to see if we should set the thread count for scanning.
     import core.gc.config;
     // ignore the thread count if it's the default.
-	// TODO: enable this when the code is included.
-    /*if (config.parallel != typeof(config).init.parallel)
-        __sd_gc_set_scanning_thread_count(config.parallel + 1);*/
+    if (config.parallel != typeof(config).init.parallel)
+	{
+		import d.gc.collector;
+		setScanningThreads(config.parallel + 1);
+	}
     return instance;
 }
 

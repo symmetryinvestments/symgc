@@ -56,7 +56,8 @@ private:
 		prepareGCCycle();
 
 		import d.gc.scanner;
-		shared(Scanner) scanner = cast(shared)Scanner(gcCycle, managedAddressSpace);
+		shared(Scanner) scanner = cast(shared)Scanner(gCollectorState.scanningThreads,
+				gcCycle, managedAddressSpace);
 
 		// Go on and on until all worklists are empty.
 		scanner.mark();
@@ -117,6 +118,10 @@ void collectorPostForkChild() {
 	gCollectorState.mutex.__clear();
 }
 
+void setScanningThreads(uint nThreads) {
+	gCollectorState.setScanningThreads(nThreads);
+}
+
 private:
 struct CollectorState {
 private:
@@ -161,6 +166,9 @@ private:
 	// Keep a minimum overhead of 12.5% over the current heap size.
 	ubyte lgMinOverhead = 3;
 
+	// How many threads to run for scanning. 0 to use the cpu count.
+	uint scanningThreads = 0;
+
 public:
 	bool maybeRunGCCycle(ref Collector collector) shared {
 		// Do not unnecessarily create contention on this mutex.
@@ -170,6 +178,13 @@ public:
 
 		scope(exit) mutex.unlock();
 		return (cast(CollectorState*) &this).maybeRunGCCycleImpl(collector);
+	}
+
+	void setScanningThreads(uint nThreads) shared {
+		mutex.lock();
+		scope(exit) mutex.unlock();
+
+		(cast(CollectorState*) &this).scanningThreads = nThreads;
 	}
 
 private:
