@@ -1,5 +1,7 @@
 module d.gc.util;
 
+nothrow:
+
 T min(T)(T a, T b) {
 	return a <= b ? a : b;
 }

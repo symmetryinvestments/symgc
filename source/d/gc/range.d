@@ -7,7 +7,7 @@ import d.gc.spec;
  * This function get a void[] range and chnage it into a
  * const(void*)[] one, reducing to alignement boundaries.
  */
-const(void*)[] makeRange(const void[] range) {
+const(void*)[] makeRange(const void[] range) nothrow {
 	auto begin = alignUp(range.ptr, PointerSize);
 	auto end = alignDown(range.ptr + range.length, PointerSize);
 
@@ -23,7 +23,7 @@ const(void*)[] makeRange(const void[] range) {
 	return ptr[0 .. length];
 }
 
-const(void*)[] makeRange(const void* start, const void* stop) {
+const(void*)[] makeRange(const void* start, const void* stop) nothrow {
 	auto length = stop - start;
 	return makeRange(start[0 .. length]);
 }

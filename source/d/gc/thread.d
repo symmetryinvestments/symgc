@@ -49,7 +49,10 @@ void destroyThread() {
 	enterBusyState();
 
 	threadCache.destroyThread();
-	gThreadState.remove(&threadCache);
+
+	version(Symgc_pthread_hook) {
+		gThreadState.remove(&threadCache);
+	}
 }
 
 void preventStopTheWorld() {
@@ -111,8 +114,10 @@ void initThread() {
 	threadCache.initialize(&gExtentMap, &gBase);
 	threadCache.activateGC();
 
-	import d.gc.global;
-	gThreadState.register(&threadCache);
+	version(Symgc_pthread_hook) {
+		import d.gc.global;
+		gThreadState.register(&threadCache);
+	}
 }
 
 struct ThreadState {
@@ -211,8 +216,10 @@ public:
 	void scanSuspendedThreads(ScanDg scan) shared {
 		assert(stopTheWorldLock.count == SharedLock.Exclusive);
 
-		mThreadList.lock();
-		scope(exit) mThreadList.unlock();
+		version(Symgc_pthread_hook) {
+			mThreadList.lock();
+			scope(exit) mThreadList.unlock();
+		}
 
 		(cast(ThreadState*) &this).scanSuspendedThreadsImpl(scan);
 	}
@@ -242,131 +249,181 @@ private:
 		registeredThreads.remove(tcache);
 	}
 
-	bool suspendRunningThreads(uint count) shared {
-		mThreadList.lock();
-		scope(exit) mThreadList.unlock();
+	version(Symgc_pthread_hook) {
+		bool suspendRunningThreads(uint count) shared {
+			mThreadList.lock();
+			scope(exit) mThreadList.unlock();
 
-		return (cast(ThreadState*) &this).suspendRunningThreadsImpl(count);
-	}
+			return (cast(ThreadState*) &this).suspendRunningThreadsImpl(count);
+		}
 
-	bool suspendRunningThreadsImpl(uint count) {
-		assert(mThreadList.isHeld(), "Mutex not held!");
+		bool suspendRunningThreadsImpl(uint count) {
+			assert(mThreadList.isHeld(), "Mutex not held!");
 
-		bool retry = false;
-		uint suspended = 0;
+			bool retry = false;
+			uint suspended = 0;
 
-		auto r = registeredThreads.range;
-		while (!r.empty) {
-			auto tc = r.front;
-			scope(success) r.popFront();
+			auto r = registeredThreads.range;
+			while (!r.empty) {
+				auto tc = r.front;
+				scope(success) r.popFront();
 
-			// Make sure we do not self suspend!
-			if (tc is &threadCache) {
-				continue;
-			}
-
-			// If the thread isn't already stopped, we'll need to retry.
-			auto ss = tc.state.suspendState;
-			if (ss == SuspendState.Detached) {
-				continue;
-			}
-
-			// If a thread is detached, stop trying.
-			if (count > 32 && ss == SuspendState.Signaled) {
-				import d.gc.proc;
-				if (isDetached(tc.tid)) {
-					tc.state.detach();
+				// Make sure we do not self suspend!
+				if (tc is &threadCache) {
 					continue;
+				}
+
+				// If the thread isn't already stopped, we'll need to retry.
+				auto ss = tc.state.suspendState;
+				if (ss == SuspendState.Detached) {
+					continue;
+				}
+
+				// If a thread is detached, stop trying.
+				if (count > 32 && ss == SuspendState.Signaled) {
+					import d.gc.proc;
+					if (isDetached(tc.tid)) {
+						tc.state.detach();
+						continue;
+					}
+				}
+
+				suspended += ss == SuspendState.Suspended;
+				retry |= ss != SuspendState.Suspended;
+
+				// If the thread has already been signaled.
+				if (ss != SuspendState.None) {
+					continue;
+				}
+
+				import d.gc.signal;
+				signalThreadSuspend(tc);
+			}
+
+			mStats.lock();
+			scope(exit) mStats.unlock();
+
+			suspendedThreadCount = suspended;
+			return retry;
+		}
+
+		bool resumeSuspendedThreads() shared {
+			mThreadList.lock();
+			scope(exit) mThreadList.unlock();
+
+			return (cast(ThreadState*) &this).resumeSuspendedThreadsImpl();
+		}
+
+		bool resumeSuspendedThreadsImpl() {
+			assert(mThreadList.isHeld(), "Mutex not held!");
+
+			bool retry = false;
+			uint suspended = 0;
+
+			auto r = registeredThreads.range;
+			while (!r.empty) {
+				auto tc = r.front;
+				scope(success) r.popFront();
+
+				// If the thread isn't already resumed, we'll need to retry.
+				auto ss = tc.state.suspendState;
+				if (ss == SuspendState.Detached) {
+					continue;
+				}
+
+				suspended += ss == SuspendState.Suspended;
+				retry |= ss != SuspendState.None;
+
+				// If the thread isn't suspended, move on.
+				if (ss != SuspendState.Suspended) {
+					continue;
+				}
+
+				import d.gc.signal;
+				signalThreadResume(tc);
+			}
+
+			mStats.lock();
+			scope(exit) mStats.unlock();
+
+			suspendedThreadCount = suspended;
+			return retry;
+		}
+
+		void scanSuspendedThreadsImpl(ScanDg scan) {
+			assert(mThreadList.isHeld(), "Mutex not held!");
+
+			auto r = registeredThreads.range;
+			while (!r.empty) {
+				auto tc = r.front;
+				scope(success) r.popFront();
+
+				// If the thread isn't suspended, move on.
+				auto ss = tc.state.suspendState;
+				if (ss != SuspendState.Suspended && ss != SuspendState.Detached) {
+					continue;
+				}
+
+				// Scan the registered TLS segments.
+				foreach (s; tc.tlsSegments) {
+					scan(s);
+				}
+
+				// Only suspended thread have their stack properly set.
+				// For detached threads, we just hope nothing's in there.
+				if (ss == SuspendState.Suspended) {
+					import d.gc.range;
+					scan(makeRange(tc.stackTop, tc.stackBottom));
 				}
 			}
 
-			suspended += ss == SuspendState.Suspended;
-			retry |= ss != SuspendState.Suspended;
-
-			// If the thread has already been signaled.
-			if (ss != SuspendState.None) {
-				continue;
+			version(Symgc_druntime_hooks) {
+				// also scan using the druntime mechanisms. This scans some
+				// extra things we aren't looking at here.
+				import core.thread.symthread;
+				scanWorldPausedData(scan);
 			}
+		}
+	} else {
+		bool suspendRunningThreads(uint count) shared {
+			// We are going to use druntime's thread list to iterate over
+			// threads that should be suspended. The pre hook should have
+			// locked the slock. If count is 0, we will send signals to threads
+			// that do not have their tlsgcdata set. This means they have never
+			// been stopped before, and so their tstate should be none
+			// (possibly busy). The suspend signal handler should update the
+			// pointer.
 
-			import d.gc.signal;
-			signalThreadSuspend(tc);
+			import core.thread.symthread;
+			uint suspended = 0;
+
+			auto retry = suspendDruntimeThreads(count == 0, suspended);
+
+			mStats.lock();
+			scope(exit) mStats.unlock();
+
+			suspendedThreadCount = suspended;
+			return retry;
 		}
 
-		mStats.lock();
-		scope(exit) mStats.unlock();
+		bool resumeSuspendedThreads() shared {
+			import core.thread.symthread;
 
-		suspendedThreadCount = suspended;
-		return retry;
-	}
+			uint suspended = 0;
 
-	bool resumeSuspendedThreads() shared {
-		mThreadList.lock();
-		scope(exit) mThreadList.unlock();
+			auto retry = resumeDruntimeThreads(suspended);
 
-		return (cast(ThreadState*) &this).resumeSuspendedThreadsImpl();
-	}
+			mStats.lock();
+			scope(exit) mStats.unlock();
 
-	bool resumeSuspendedThreadsImpl() {
-		assert(mThreadList.isHeld(), "Mutex not held!");
-
-		bool retry = false;
-		uint suspended = 0;
-
-		auto r = registeredThreads.range;
-		while (!r.empty) {
-			auto tc = r.front;
-			scope(success) r.popFront();
-
-			// If the thread isn't already resumed, we'll need to retry.
-			auto ss = tc.state.suspendState;
-			if (ss == SuspendState.Detached) {
-				continue;
-			}
-
-			suspended += ss == SuspendState.Suspended;
-			retry |= ss != SuspendState.None;
-
-			// If the thread isn't suspended, move on.
-			if (ss != SuspendState.Suspended) {
-				continue;
-			}
-
-			import d.gc.signal;
-			signalThreadResume(tc);
+			suspendedThreadCount = suspended;
+			return retry;
 		}
 
-		mStats.lock();
-		scope(exit) mStats.unlock();
-
-		suspendedThreadCount = suspended;
-		return retry;
-	}
-
-	void scanSuspendedThreadsImpl(ScanDg scan) {
-		assert(mThreadList.isHeld(), "Mutex not held!");
-
-		auto r = registeredThreads.range;
-		while (!r.empty) {
-			auto tc = r.front;
-			scope(success) r.popFront();
-
-			// If the thread isn't suspended, move on.
-			auto ss = tc.state.suspendState;
-			if (ss != SuspendState.Suspended && ss != SuspendState.Detached) {
-				continue;
-			}
-
-			// Scan the registered TLS segments.
-			foreach (s; tc.tlsSegments) {
-				scan(s);
-			}
-
-			// Only suspended thread have their stack properly set.
-			// For detached threads, we just hope nothing's in there.
-			if (ss == SuspendState.Suspended) {
-				import d.gc.range;
-				scan(makeRange(tc.stackTop, tc.stackBottom));
-			}
+		void scanSuspendedThreadsImpl(ScanDg scan) {
+			// use our specialized druntime function
+			import core.thread.symthread;
+			scanWorldPausedData(scan);
 		}
 	}
 }

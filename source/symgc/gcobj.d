@@ -6,6 +6,11 @@ static import core.memory;
 
 import core.stdc.string : memset;
 
+// when running unittests and druntime is involved, set the GC to the symmetry GC
+version(Symgc_testing) version(Symgc_druntime_hooks) {
+	extern(C) __gshared rt_options = ["gcopt=gc:sdc"];
+}
+
 extern(C) nothrow {
 	void onOutOfMemoryError(void* pretend_sideffect = null, string file = __FILE__, size_t line = __LINE__) @trusted nothrow @nogc;
 
