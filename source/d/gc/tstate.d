@@ -79,6 +79,36 @@ public:
 	bool onSuspendSignal() {
 		auto s = state.load();
 
+		version(Symgc_pthread_hook) { }
+		else {
+			import core.thread;
+			auto myThread = Thread.getThis();
+			assert(myThread !is null);
+			if (myThread.tlsGCData is null) {
+				// need to store the tlsGCData, but also need to jump to the
+				// signalled state, as this is what the main thread would have
+				// done if it had access to our threadcache. This only happens
+				// on the first suspend in the thread.
+				assert(status(s) == SuspendState.None);
+				while (true) {
+					auto n = s + SuspendState.Signaled;
+					assert(status(n) == SuspendState.Signaled);
+
+					if (state.casWeak(s, n)) {
+						break;
+					}
+				}
+
+				// now, store the pointer to the threadcache inside mythread.
+				// After this point, GC cycles can directly access the
+				// threadcache.
+				import d.gc.tcache;
+				myThread.tlsGCData = &threadCache;
+
+				s = state.load();
+			}
+		}
+
 		while (true) {
 			assert(status(s) == SuspendState.Signaled);
 
@@ -227,8 +257,16 @@ private auto runThread(void* delegate() dg) {
 	import core.sys.posix.pthread;
 	tc.self = pthread_self();
 
+	version(Symgc_druntime_hooks) {
+		import core.thread;
+		// set the threadcache pointer in the current thread
+		auto myThread = Thread.getThis();
+		assert(myThread !is null);
+		myThread.tlsGCData = tc;
+	}
+
 	ThreadState* s = &tc.state;
-	scope(exit) {
+	scope(success) {
 		assert(s.state.load() == 0, "Invalid leftover state!");
 	}
 

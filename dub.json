@@ -9,16 +9,43 @@
 	"name": "symgc",
 	"configurations" : {
 		"standard" : {
-			"targetType": "library"
+			"targetType": "library",
+			"versions": [
+				"Symgc_druntime_hooks"
+			]
+		},
+		"legacy" : {
+			"targetType": "library",
+			"versions" : [
+				"Symgc_pthread_hook",
+				"Symgc_druntime_hooks"
+			]
+		},
+		"pthread" : {
+			"targetType": "library",
+			"versions" : [
+				"Symgc_pthread_hook"
+			]
 		},
 		"integration" : {
 			"targetType": "library",
-			"versions" : ["integrationTests"]
+			"versions" : [
+				"Symgc_pthread_hook"
+			]
 		}
 	},
 	"buildTypes" : {
 		"unittest-x" : {
-			"buildOptions": ["unittests", "releaseMode", "optimize", "inline"]
+			"buildOptions": ["unittests", "releaseMode", "optimize", "inline"],
+			"versions" : [
+				"Symgc_testing"
+			]
+		},
+		"unittest" : {
+			"buildOptions": ["unittests", "debugMode", "debugInfo"],
+			"versions" : [
+				"Symgc_testing"
+			]
 		}
 	}
 }

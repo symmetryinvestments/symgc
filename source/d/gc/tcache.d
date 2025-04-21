@@ -104,6 +104,9 @@ public:
 		return true;
 	}
 
+	@property
+	auto suspendState() => state.suspendState;
+
 	void initialize(shared(ExtentMap)* emap, shared(Base)* base) {
 		this.emap = CachedExtentMap(emap, base);
 
@@ -1714,21 +1717,34 @@ private:
 	// Make sure we leave things in a clean state.
 	scope(exit) {
 		tc.destroyThread();
-		assert(tc.allocated == tc.deallocated);
 	}
 
 	// Faux destructor which simply records most recent kill:
 	static size_t lastKilledUsedCapacity = 0;
 	static void* lastKilledAddress;
 	static uint destroyCount = 0;
-	static void destruct(void* ptr, size_t size) {
+	static void destroyfn(void* ptr, size_t size) {
 		lastKilledUsedCapacity = size;
 		lastKilledAddress = ptr;
 		destroyCount++;
 	}
 
+	version(Symgc_druntime_hooks) {
+		// use a static struct to get the correct typeinfo
+		static struct Destroyer(size_t realSize)
+		{
+			ubyte[realSize] data;
+			~this() { destroyfn(&this, realSize); }
+		}
+
+		auto destruct(size_t size)() => cast(void*)typeid(Destroyer!size);
+	} else {
+		// using sdc-style hook.
+		auto destruct(size_t size)() => &destroyfn;
+	}
+
 	// Finalizers for large allocs:
-	auto s0 = tc.allocAppendable(16384, false, false, &destruct);
+	auto s0 = tc.allocAppendable(16384, false, false, destruct!16384);
 	tc.destroy(s0);
 	assert(lastKilledAddress == s0);
 	assert(lastKilledUsedCapacity == 16384);
@@ -1740,7 +1756,7 @@ private:
 	assert(destroyCount == oldDestroyCount);
 
 	// Finalizers for small allocs:
-	auto s2 = tc.allocAppendable(45, false, false, &destruct);
+	auto s2 = tc.allocAppendable(45, false, false, destruct!48);
 	assert(tc.getCapacity(s2[0 .. 45]) == 48);
 	assert(!tc.extend(s2[0 .. 45], 4));
 	assert(tc.extend(s2[0 .. 45], 3));
@@ -1750,7 +1766,7 @@ private:
 	assert(lastKilledUsedCapacity == 48);
 
 	// Behavior of realloc() on small allocs with finalizers:
-	auto s3 = tc.allocAppendable(70, false, false, &destruct);
+	auto s3 = tc.allocAppendable(70, false, false, destruct!70);
 	assert(tc.getCapacity(s3[0 .. 70]) == 72);
 	auto s4 = tc.realloc(s3, 70, false);
 	assert(s3 == s4);
@@ -1767,4 +1783,6 @@ private:
 	oldDestroyCount = destroyCount;
 	tc.destroy(s5);
 	assert(destroyCount == oldDestroyCount);
+
+	assert(tc.allocated == tc.deallocated);
 }
