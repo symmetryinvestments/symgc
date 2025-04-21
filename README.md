@@ -6,14 +6,15 @@ The idea is to extract the GC portions of the SDC runtime (and everything needed
 
 ## Requirements
 
-Linux x64 (so far)
+Intel/AMD 64-bit CPU.
+Linux (so far)
 
-DMD master (2.111 base)
+DMD 2.111 or later
 
 ## Progress so far
 
 - d.sync is ported, uses core.atomic for building locks. Unittests passing.
-- d.gc modules are in progress (36/37):
+- d.gc modules are ported.
 - [X] allocclass.d
 - [X] arena.d
 - [X] base.d
@@ -28,7 +29,7 @@ DMD master (2.111 base)
 - [X] fork.d
 - [X] global.d
 - [X] heap.d
-- [ ] hooks.d - Ported for tests, but needs full integration with druntime to finish
+- [X] hooks.d
 - [X] memmap.d
 - [X] page.d
 - [X] proc.d
@@ -56,11 +57,25 @@ Integration tests are also ported, and are in the test directory. Only SDC tests
 
 To run, use dub in the test directory.
 
+- [X] Add object for including new GC into druntime.
+- [X] Test with real projects
+- [X] Remove pthread override, use normal druntime hooks.
+
+Note there are 3 configs:
+- `standard` - Uses only druntime hooks for all GC operations. The SDC `pthread_create` trampoline is not used
+- `pthread` - Uses only the `pthread_create` trampoline to capture started threads. This is the equivalent of SDC's non-druntime build.
+- `legacy` - Uses both druntime hooks and the `pthread_create` trampoline. This is what was developed when merging SDC's build of the GC with druntime.
+
+All three configs pass unittests (only a couple unittests needed modification to pass).
+
+The integration tests are explicitly using the `pthread` config, as those do not expect to use druntime.
+
 ## Todo
 
-- [ ] Add object for including new GC into druntime.
-- [ ] Test with real projects
-- [ ] Remove pthread override, use normal druntime hooks.
+- [ ] druntime update to handle thread creation and destruction.
+- [ ] Windows support
+- [ ] Port integration tests to standard config (druntime only).
+- [ ] ARM 64-bit support.
 
 ## Acknowledgements
 
