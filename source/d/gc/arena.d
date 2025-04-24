@@ -247,6 +247,7 @@ package:
 
 	import d.gc.emap;
 	static shared ExtentMap emapStorage;
+	emapStorage.initialize(*base);
 	auto emap = CachedExtentMap(&emapStorage, base);
 
 	import d.gc.region;
@@ -328,6 +329,7 @@ package:
 
 	import d.gc.emap;
 	static shared ExtentMap emapStorage;
+	emapStorage.initialize(*base);
 	auto emap = CachedExtentMap(&emapStorage, base);
 
 	import d.gc.region;
@@ -490,6 +492,7 @@ package:
 
 	import d.gc.emap;
 	static shared ExtentMap emapStorage;
+	emapStorage.initialize(*base);
 	auto emap = CachedExtentMap(&emapStorage, base);
 
 	import d.gc.region;
