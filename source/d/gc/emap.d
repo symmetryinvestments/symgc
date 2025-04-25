@@ -35,6 +35,10 @@ public:
 	void clear(ref ExtentMapCache cache, void* address, uint pages) shared {
 		tree.clearRange(cache, address, pages);
 	}
+
+	void initialize(ref shared(Base) base) shared {
+		tree.initialize(base);
+	}
 }
 
 /**
@@ -233,6 +237,7 @@ public:
 	scope(exit) base.clear();
 
 	static shared ExtentMap emapStorage;
+	emapStorage.initialize(base);
 	auto emap = CachedExtentMap(&emapStorage, &base);
 
 	// We have not mapped anything.
