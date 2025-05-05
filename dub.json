@@ -27,6 +27,15 @@
 				"Symgc_pthread_hook"
 			]
 		},
+		"win32": {
+			"targetType": "library",
+			"versions" : [
+				"Symgc_druntime_hooks"
+			],
+			"excludedSourceFiles" : [
+				"source/d/gc/*.d"
+			]
+		},
 		"integration" : {
 			"targetType": "library",
 			"versions" : [
