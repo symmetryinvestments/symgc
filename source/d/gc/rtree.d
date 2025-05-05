@@ -33,7 +33,7 @@ enum Level0Align = size_t(1) << Levels[0].shift;
 enum Level0Mask = Level0Size - 1;
 
 static assert((Level0Mask & BlockPointerMask) == 0,
-              "Cannot pack block pointer and level 0 key in one pointer!");
+		   "Cannot pack block pointer and level 0 key in one pointer!");
 
 struct RTree(T) {
 private:
@@ -331,7 +331,7 @@ private:
 		}
 
 		// We had data in l1, push it in l2.
-        import core.stdc.string : memmove;
+		import core.stdc.string : memmove;
 		memmove(&l2[1], l2.ptr, CacheEntry.sizeof * (L2Size - 1));
 		l2[0] = e;
 	}
