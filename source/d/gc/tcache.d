@@ -119,11 +119,11 @@ public:
 		// Make sure initialize can be called multiple
 		// times on the same thread cache.
 		if (isInitialized()) {
-			assert(self == pthread_self(), "Invalid pthread_self!");
+			assert(self == currentThreadHandle(), "Invalid current thread handle!");
 			return;
 		}
 
-		self = pthread_self();
+		self = currentThreadHandle();
 
 		/**
 		 * You'd think linux would provide a way to get the tid from
@@ -131,7 +131,7 @@ public:
 		 */
 		//import core.sys.linux.unistd;
 		// NOTE: not included in druntime so we have to define it locally
-		tid = gettid();
+		version(linux) tid = gettid();
 
 		nextAllocationEvent = DefaultEventWait;
 		nextDeallocationEvent = DefaultEventWait;

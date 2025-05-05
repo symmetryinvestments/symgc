@@ -25,6 +25,7 @@ else version(Windows) {
 ThreadHandle runThread(void* delegate() dg) {
 	ThreadHandle tid;
 	version (linux) {
+		import core.sys.posix.pthread;
 		extern (C) void* function(void*) fptr;
 		fptr = cast(typeof(fptr)) dg.funcptr;
 
@@ -44,6 +45,7 @@ ThreadHandle runThread(void* delegate() dg) {
 
 void* joinThread(ThreadHandle tid) {
 	version(linux) {
+		import core.sys.posix.pthread;
 		void* result;
 		pthread_join(tid, &result);
 		return result;

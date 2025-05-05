@@ -59,18 +59,17 @@ public:
 			cast(pthread_t*) alloca(pthread_t.sizeof * threadCount);
 		auto threads = threadsPtr[0 .. threadCount];
 
-		static extern(C) void* markThreadEntry(void* ctx) {
+		static void markThreadEntry(void* ctx) {
 			import d.gc.tcache;
 			threadCache.activateGC(false);
 
 			(cast(shared(Scanner*)) ctx).runMark();
-			return null;
 		}
 
 		// First thing, start the worker threads, so they can do work ASAP.
 		foreach (ref tid; threads) {
-			import symgc.trampoline;
-			createGCThread(&tid, null, &markThreadEntry, cast(void*) &this);
+			import symgc.thread;
+			createGCThread(&tid, &markThreadEntry, cast(void*) &this);
 		}
 
 		// Scan the roots.
