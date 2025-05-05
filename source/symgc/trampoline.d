@@ -6,19 +6,23 @@ package:
 
 import core.sys.posix.pthread;
 
+import d.gc.thread;
+
+alias PthreadFunction = extern(C) void* function(void*);
+
 // Hijack the system's pthread_create function so we can register the thread.
 extern(C) int pthread_create(pthread_t* thread, scope const pthread_attr_t* attr,
 		PthreadFunction start_routine, void* arg) {
-	import symgc.thread: runThread, ThreadRunner;
+	import symgc.thread: ThreadRunner, allocThreadRunner;
 
-	auto runner = ThreadRunner.alloc(start_routine, arg);
+	auto runner = allocThreadRunner(start_routine, arg);
 
 	// Stop the world cannot happen during thread startup.
 	preventStopTheWorld();
 
 	auto ret =
 		pthread_create_trampoline(thread, attr,
-				cast(PthreadFunction) &runThread!true, runner);
+				cast(PthreadFunction) runner.getFunction!true(), runner);
 	if (ret != 0) {
 		// The spawned thread will call this when there are no errors.
 		allowStopTheWorld();
