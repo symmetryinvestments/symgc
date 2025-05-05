@@ -11,20 +11,20 @@ import core.stdc.errno;
 import core.sys.windows.windows;
 
 extern(Windows) {
-    bool WaitOnAddress(
-        VOID* Address,
-        PVOID CompareAddress,
-        SIZE_T AddressSize,
-        DWORD dwMilliseconds
-    );
+	bool WaitOnAddress(
+		VOID* Address,
+		PVOID CompareAddress,
+		SIZE_T AddressSize,
+		DWORD dwMilliseconds
+	);
 
-    void WakeByAddressSingle(
-        PVOID Address
-    );
+	void WakeByAddressSingle(
+		PVOID Address
+	);
 
-    void WakeByAddressAll(
-        PVOID Address
-    );
+	void WakeByAddressAll(
+		PVOID Address
+	);
 }
 
 struct Win32Waiter {
@@ -43,9 +43,9 @@ struct Win32Waiter {
 			assert(c == 0, "Failed to consume wake up!");
 
 			auto err = WaitOnAddress(cast(void*)&wakeupCount, &c, c.sizeof, INFINITE);
-            if (!err) {
-                // TODO: if timeout ever gets implemented, check here.
-                assert(0, "WaitOnAddress operation failed!");
+			if (!err) {
+				// TODO: if timeout ever gets implemented, check here.
+				assert(0, "WaitOnAddress operation failed!");
 			}
 		}
 	}
@@ -63,7 +63,7 @@ struct Win32Waiter {
 }
 
 @"win32 wait" unittest {
-    import symgc.test;
+	import symgc.test;
 	import d.sync.atomic;
 	shared Atomic!uint state;
 	shared Atomic!uint count;
