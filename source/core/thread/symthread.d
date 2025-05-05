@@ -1,5 +1,7 @@
 // we have to put this in the core.thread package to access thread package internals
 module core.thread.symthread;
+
+version(linux):
 import core.thread.osthread;
 import core.thread.threadbase;
 import core.thread.types;

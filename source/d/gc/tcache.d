@@ -60,11 +60,13 @@ private:
 	import d.gc.tstate;
 	package ThreadState state;
 
-	import core.sys.posix.pthread;
-	package pthread_t self;
+	import symgc.thread;
+	package ThreadHandle self;
 
-	import core.sys.posix.sys.types;
-	package pid_t tid;
+	version(linux) {
+		import core.sys.posix.sys.types;
+		package pid_t tid;
+	}
 
 	RNode rnode;
 

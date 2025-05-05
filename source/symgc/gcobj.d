@@ -1,6 +1,8 @@
 // D runtime hook to include symgc as an option for garbage collection.
 module symgc.gcobj;
 
+version(linux):
+
 import core.gc.gcinterface;
 static import core.memory;
 

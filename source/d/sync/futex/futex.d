@@ -1,5 +1,6 @@
 module d.sync.futex.futex;
 
+version(linux):
 import d.sync.atomic;
 
 import core.sys.linux.futex;

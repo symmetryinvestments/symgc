@@ -4,6 +4,8 @@
 // druntime.
 module symgc.rt;
 
+version(linux):
+
 import core.internal.traits;
 alias callWithStackShell = externDFunc!("core.thread.osthread.callWithStackShell", void function(scope void delegate(void*) nothrow) nothrow);
 void __sd_gc_push_registers(scope void delegate(void*) dg)

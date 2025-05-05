@@ -231,20 +231,9 @@ private:
 	checkForState(SuspendState.Signaled);
 }
 
-version(unittest)
-private auto runThread(void* delegate() dg) {
-	extern(C) void* function(void*) fptr;
-	fptr = cast(typeof(fptr))dg.funcptr;
-	import core.sys.posix.pthread;
-	pthread_t tid;
-	auto r = pthread_create(&tid, null, fptr, dg.ptr);
-	assert(r == 0, "Failed to create thread!");
-
-	return tid;
-}
-
 @"suspend" unittest {
 	import d.gc.signal;
+	import symgc.test;
 	setupSignals();
 
 	// Make sure to use the state from the thread cache
@@ -333,8 +322,7 @@ private auto runThread(void* delegate() dg) {
 	scope(exit) {
 		setMustStop();
 
-		void* ret;
-		pthread_join(autoResumeThreadID, &ret);
+		joinThread(autoResumeThreadID);
 	}
 
 	void check(SuspendState ss, bool busy, uint suspendCount) {

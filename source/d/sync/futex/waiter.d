@@ -1,4 +1,5 @@
 module d.sync.futex.waiter;
+version(linux):
 
 import d.sync.atomic;
 import d.sync.futex.futex;
@@ -47,19 +48,8 @@ struct FutexWaiter {
 	}
 }
 
-version(unittest)
-private auto runThread(void* delegate() dg) {
-	extern(C) void* function(void*) fptr;
-	fptr = cast(typeof(fptr))dg.funcptr;
-	import core.sys.posix.pthread;
-	pthread_t tid;
-	auto r = pthread_create(&tid, null, fptr, dg.ptr);
-	assert(r == 0, "Failed to create thread!");
-
-	return tid;
-}
-
 @"futex wait" unittest {
+	import symgc.test;
 	import d.sync.atomic;
 	shared Atomic!uint state;
 	shared Atomic!uint count;
@@ -99,9 +89,7 @@ private auto runThread(void* delegate() dg) {
 	state.store(2);
 	waiter.wakeup();
 
-	void* result;
-	import core.sys.posix.pthread;
-	pthread_join(tid, &result);
+	joinThread(tid);
 	assert(count.load() == 10);
 	assert(waiter.wakeupCount.load() == 0);
 }
