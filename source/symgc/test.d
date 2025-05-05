@@ -19,7 +19,7 @@ else version(Windows) {
 
     void usleep(ulong usecs) {
         Sleep(cast(uint)(usecs / 1000));
-    }    
+    }
 }
 
 ThreadHandle runThread(void* delegate() dg) {
@@ -36,7 +36,7 @@ ThreadHandle runThread(void* delegate() dg) {
         fptr = cast(typeof(fptr)) dg.funcptr;
 
         tid = CreateThread(null, 0, fptr, dg.ptr, 0, null);
-        
+
         assert(tid != INVALID_HANDLE_VALUE, "Failed to create thread!");
     }
     return tid;
