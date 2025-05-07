@@ -1,4 +1,5 @@
 module d.gc.scanner;
+version(linux):
 
 import symgc.intrinsics;
 

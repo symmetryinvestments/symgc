@@ -1,5 +1,7 @@
 module d.gc.emap;
 
+version(linux):
+
 import d.gc.base;
 import d.gc.extent;
 import d.gc.rtree;

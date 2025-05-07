@@ -1,5 +1,7 @@
 module d.gc.hooks;
 
+version(linux):
+
 import d.gc.types;
 
 // ensure that at least one of pthread_hook or druntime_hook must be true (both

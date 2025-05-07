@@ -1,4 +1,5 @@
 module d.gc.extent;
+version(linux):
 
 import d.sync.atomic;
 

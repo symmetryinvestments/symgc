@@ -1,4 +1,5 @@
 module d.gc.base;
+version(linux):
 
 import d.gc.spec;
 import d.gc.util;
@@ -166,6 +167,9 @@ private:
 			pages_hugify(nextMetadataPage - BlockSize, BlockSize);
 		}
 
+		// commit the page
+		pages_commit(ptr, PageSize);
+
 		return GenerationPointer(ptr, generation);
 	}
 
@@ -257,7 +261,7 @@ private:
 		auto size = BlockSize << shift;
 
 		import d.gc.memmap;
-		auto ptr = pages_map(null, size, BlockSize);
+		auto ptr = pages_reserve(null, size, BlockSize);
 		if (ptr is null) {
 			return false;
 		}
