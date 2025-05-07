@@ -1,6 +1,4 @@
 module d.gc.base;
-version(linux):
-
 import d.gc.spec;
 import d.gc.util;
 
@@ -162,8 +160,8 @@ private:
 		nextMetadataPage += PageSize;
 
 		// We just filled a block worth of metadata, make it huge!
+		import d.gc.memmap;
 		if (isAligned(nextMetadataPage, BlockSize)) {
-			import d.gc.memmap;
 			pages_hugify(nextMetadataPage - BlockSize, BlockSize);
 		}
 
@@ -261,7 +259,7 @@ private:
 		auto size = BlockSize << shift;
 
 		import d.gc.memmap;
-		auto ptr = pages_reserve(null, size, BlockSize);
+		auto ptr = pages_map(null, size, BlockSize);
 		if (ptr is null) {
 			return false;
 		}
