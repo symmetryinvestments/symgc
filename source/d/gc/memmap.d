@@ -128,7 +128,9 @@ void pages_purge_lazy(void* addr, size_t size) {
 
 void pages_zero(void* addr, size_t size) {
 	if (size >= PurgePageThresoldSize) {
+		// Purging and recommitting should reset the data to 0.
 		pages_purge(addr, size);
+		pages_commit(addr, size);
 	} else {
 		import core.stdc.string;
 		memset(addr, 0, size);
