@@ -1,5 +1,7 @@
 module d.gc.thread;
 
+version(linux):
+
 import d.gc.capi;
 import d.gc.tcache;
 import d.gc.tstate;

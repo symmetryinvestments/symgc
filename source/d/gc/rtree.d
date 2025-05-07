@@ -1,5 +1,7 @@
 module d.gc.rtree;
 
+version(linux):
+
 import d.gc.base;
 import d.gc.spec;
 

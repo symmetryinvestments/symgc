@@ -1,5 +1,7 @@
 module d.gc.tstate;
 
+version(linux):
+
 import symgc.intrinsics;
 
 enum SuspendState {

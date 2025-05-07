@@ -1,4 +1,5 @@
 module d.gc.signal;
+version(linux):
 
 import d.gc.tcache;
 import d.gc.tstate;

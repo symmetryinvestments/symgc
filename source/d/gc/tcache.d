@@ -1,5 +1,7 @@
 module d.gc.tcache;
 
+version(linux):
+
 import d.gc.base;
 import d.gc.emap;
 import d.gc.ring;

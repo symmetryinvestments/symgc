@@ -1,5 +1,7 @@
 module d.gc.arena;
 
+version(linux):
+
 import d.gc.emap;
 import d.gc.extent;
 import d.gc.size;
