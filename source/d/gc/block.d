@@ -1,5 +1,4 @@
 module d.gc.block;
-version(linux):
 
 import d.gc.allocclass;
 import d.gc.base;
@@ -301,6 +300,7 @@ public:
 
 		// For systems which do not have overcommit, we must commit the allocation before use.
 		if (alreadyDirty < pages) {
+			import d.gc.memmap;
 			pages_commit(address + index * PageSize, pages * PageSize);
 		}
 
