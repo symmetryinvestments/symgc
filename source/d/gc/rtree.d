@@ -1,7 +1,5 @@
 module d.gc.rtree;
 
-version(linux):
-
 import d.gc.base;
 import d.gc.spec;
 
@@ -179,7 +177,7 @@ public:
 			// more complicated as the alternative path requires atomic ops.
 			if (key1 == 0 && stop >= nextPtr) {
 				import d.gc.memmap;
-				pages_purge(cast(void*) leaves.ptr, typeof(*leaves).sizeof);
+				pages_zero(cast(void*) leaves.ptr, typeof(*leaves).sizeof);
 
 				ptr = nextPtr;
 				continue;
@@ -245,7 +243,7 @@ private:
 			return leaves;
 		}
 
-		leaves = cast(Leaves) base.reserveAddressSpace(typeof(*leaves).sizeof);
+		leaves = cast(Leaves) base.reserveAndCommitAddressSpace(typeof(*leaves).sizeof);
 		nodes[key0].data.store!(MemoryOrder.Relaxed)(cast(size_t) leaves);
 		return leaves;
 	}
