@@ -1,20 +1,22 @@
 // we have to put this in the core.thread package to access thread package internals
 module core.thread.symthread;
+
+version(linux):
 import core.thread.osthread;
 import core.thread.threadbase;
 import core.thread.types;
 import d.gc.types;
 
 private {
-    import core.internal.traits : externDFunc;
-    alias DruntimeScanDg = void delegate(void* pstart, void* pend) nothrow;
-    alias rt_tlsgc_scan =
-        externDFunc!("rt.tlsgc.scan", void function(void*, scope DruntimeScanDg) nothrow);
+	import core.internal.traits : externDFunc;
+	alias DruntimeScanDg = void delegate(void* pstart, void* pend) nothrow;
+	alias rt_tlsgc_scan =
+	    externDFunc!("rt.tlsgc.scan", void function(void*, scope DruntimeScanDg) nothrow);
 }
 
 private Thread toThread(return scope ThreadBase t) @trusted nothrow @nogc pure
 {
-    return cast(Thread) cast(void*) t;
+	return cast(Thread) cast(void*) t;
 }
 
 bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {

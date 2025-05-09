@@ -17,7 +17,7 @@ enum Quantum = One << LgQuantum;
 enum QuantumMask = Quantum - 1;
 
 static assert(Quantum >= PointerSize,
-              "Quantum must be at least pointer sized!");
+			  "Quantum must be at least pointer sized!");
 
 // Cache line.
 enum LgCacheLine = 6;

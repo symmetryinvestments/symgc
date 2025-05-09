@@ -1,4 +1,5 @@
 module d.gc.bin;
+version(linux):
 
 import d.gc.arena;
 import d.gc.emap;

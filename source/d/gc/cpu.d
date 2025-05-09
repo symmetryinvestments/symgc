@@ -1,4 +1,5 @@
 module d.gc.cpu;
+version(linux):
 
 auto getCoreCount() {
 	auto coreCountPtr = cast(uint*) &gCoreCount;

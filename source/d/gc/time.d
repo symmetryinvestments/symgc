@@ -1,5 +1,7 @@
 module d.gc.time;
 
+version(linux):
+
 import core.sys.posix.time;
 
 enum ulong Microsecond = 10;

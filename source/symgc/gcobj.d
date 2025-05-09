@@ -1,8 +1,12 @@
 // D runtime hook to include symgc as an option for garbage collection.
 module symgc.gcobj;
 
+version(linux):
+
 import core.gc.gcinterface;
 static import core.memory;
+
+import core.thread.threadbase : ThreadBase;
 
 import core.stdc.string : memset;
 
@@ -37,6 +41,18 @@ extern(C) nothrow {
 
 enum TYPEINFO_IN_BLOCK = cast(void*)1;
 
+void initSDCThread(ThreadBase t) nothrow @nogc
+{
+	import d.gc.thread;
+	// TODO: see if this can be correctly marked
+	// createThread!false();
+	(cast(void function() nothrow @nogc)&createThread!false)();
+
+	// set up the thread to point at our thread cache;
+	import d.gc.tcache;
+	t.tlsGCData = &threadCache;
+}
+
 private pragma(crt_constructor) void gc_sdc_ctor()
 {
 	_d_register_sdc_gc();
@@ -48,8 +64,16 @@ extern(C) void _d_register_sdc_gc()
 	createProcess();
 
 	import core.gc.registry;
-	registerGCFactory("sdc", &initialize);
-	registerGCFactory("sdcq", &initializeQuiet);
+	static if(__traits(compiles, registerGCFactory("sdc", &initialize, &initSDCThread)))
+	{
+		registerGCFactory("sdc", &initialize, &initSDCThread);
+		registerGCFactory("sdcq", &initializeQuiet, &initSDCThread);
+	}
+	else
+	{
+		registerGCFactory("sdc", &initialize);
+		registerGCFactory("sdcq", &initializeQuiet);
+	}
 }
 
 shared static this()
@@ -58,9 +82,9 @@ shared static this()
 }
 
 extern(C) {
-    // do not import GC modules, they might add a dependency to this whole module
-    void _d_register_conservative_gc();
-    void _d_register_manual_gc();
+	// do not import GC modules, they might add a dependency to this whole module
+	void _d_register_conservative_gc();
+	void _d_register_manual_gc();
 
 	// overtakes the function in core.internal.gc.
 	void* register_default_gcs()
@@ -82,22 +106,22 @@ private __gshared SnazzyGC instance = new SnazzyGC;
 
 private GC initializeQuiet()
 {
-    // check the config to see if we should set the thread count for scanning.
-    import core.gc.config;
-    // ignore the thread count if it's the default.
-    if (config.parallel != typeof(config).init.parallel)
+	// check the config to see if we should set the thread count for scanning.
+	import core.gc.config;
+	// ignore the thread count if it's the default.
+	if (config.parallel != typeof(config).init.parallel)
 	{
 		import d.gc.collector;
 		setScanningThreads(config.parallel + 1);
 	}
-    return instance;
+	return instance;
 }
 
 private GC initialize()
 {
-    import core.stdc.stdio;
-    printf("using SDC GC!\n");
-    return initializeQuiet();
+	import core.stdc.stdio;
+	printf("using SDC GC!\n");
+	return initializeQuiet();
 }
 
 final class SnazzyGC : GC
@@ -384,6 +408,23 @@ final class SnazzyGC : GC
 	{
 		return __sd_gc_hook_shrink_array_used(slice.ptr, slice.length, existingUsed);
 	}
+
+	void initThread(ThreadBase t) nothrow @nogc
+	{
+		initSDCThread(t);
+	}
+
+	void cleanupThread(ThreadBase t) nothrow @nogc
+	{
+		// set up the thread to point at our thread cache;
+		import d.gc.tcache;
+		if (t.tlsGCData is &threadCache)
+		{
+			import d.gc.thread;
+			(cast(void function() nothrow @nogc)&destroyThread)();
+			t.tlsGCData = null;
+		}
+	}
 }
 
 // HELPER FUNCTIONS
@@ -542,7 +583,7 @@ bool hook_extendArrayUsed(void* ptr, size_t newUsed, size_t existingUsed) {
 
 pragma(mangle, "__sd_gc_hook_reserve_array_capacity")
 bool hook_reserveArrayCapacity(void* ptr, size_t request,
-                                    size_t existingUsed) {
+									size_t existingUsed) {
 	assert(request >= existingUsed);
 	return
 		threadCache.reserve(ptr[0 .. existingUsed + 1], request - existingUsed);

@@ -1,5 +1,7 @@
 module d.gc.proc;
 
+version(linux):
+
 import core.sys.posix.sys.types;
 
 /**

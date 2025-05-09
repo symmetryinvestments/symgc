@@ -1,5 +1,7 @@
 module d.gc.capi;
 
+version(linux):
+
 import d.gc.tcache;
 import d.gc.emap;
 
