@@ -172,15 +172,19 @@ public:
 
 			auto key1 = subKey(ptr, 1);
 
-			// If we need to clear the whole page, do so via purging.
-			// XXX: We might want to do it for smaller runs, but this is
-			// more complicated as the alternative path requires atomic ops.
-			if (key1 == 0 && stop >= nextPtr) {
-				import d.gc.memmap;
-				pages_zero(cast(void*) leaves.ptr, typeof(*leaves).sizeof);
+			// Windows does not have an atomic way to zero large numbers of pages.
+			// So we cannot use pages_purge on Windows.
+			version(linux) {
+				// If we need to clear the whole page, do so via purging.
+				// XXX: We might want to do it for smaller runs, but this is
+				// more complicated as the alternative path requires atomic ops.
+				if (key1 == 0 && stop >= nextPtr) {
+					import d.gc.memmap;
+					pages_purge(cast(void*) leaves.ptr, typeof(*leaves).sizeof);
 
-				ptr = nextPtr;
-				continue;
+					ptr = nextPtr;
+					continue;
+				}
 			}
 
 			auto subStop = stop < nextPtr ? stop : nextPtr;

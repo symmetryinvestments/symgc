@@ -1,7 +1,5 @@
 module d.gc.emap;
 
-version(linux):
-
 import d.gc.base;
 import d.gc.extent;
 import d.gc.rtree;
@@ -182,11 +180,11 @@ public:
 		return (arenaIndex & 0x01) != 0;
 	}
 
-	@property
+	/*@property
 	auto arena() const {
 		import d.gc.arena;
 		return Arena.getInitialized(arenaIndex);
-	}
+	}*/
 
 	/**
 	 * Slab features.
