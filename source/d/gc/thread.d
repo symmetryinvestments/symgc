@@ -17,11 +17,13 @@ void createProcess() {
 
 	initThread();
 
-	import d.gc.hooks;
-	__sd_gc_register_global_segments();
+	version(Symgc_pthread_hook) {
+		import d.gc.hooks;
+		__sd_gc_register_global_segments();
 
-	import symgc.rt;
-	registerTlsSegments();
+		import symgc.rt;
+		registerTlsSegments();
+	}
 }
 
 void createThread(bool AllowStopTheWorld)() {
@@ -36,8 +38,10 @@ void createThread(bool AllowStopTheWorld)() {
 
 	initThread();
 
-	import symgc.rt;
-	registerTlsSegments();
+	version(Symgc_pthread_hook) {
+		import symgc.rt;
+		registerTlsSegments();
+	}
 }
 
 void destroyThread() {
