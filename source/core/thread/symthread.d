@@ -10,6 +10,11 @@ private {
     alias DruntimeScanDg = void delegate(void* pstart, void* pend) nothrow;
     alias rt_tlsgc_scan =
         externDFunc!("rt.tlsgc.scan", void function(void*, scope DruntimeScanDg) nothrow);
+	// TODO: wish this was package...
+	alias core_thread_osthread_suspend =
+		externDFunc!("core.thread.osthread.suspend", bool function(Thread) nothrow @nogc);
+	alias core_thread_osthread_resume =
+		externDFunc!("core.thread.osthread.resume", void function(ThreadBase) nothrow @nogc);
 }
 
 private Thread toThread(return scope ThreadBase t) @trusted nothrow @nogc pure
@@ -52,19 +57,25 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 			if (ss != SuspendState.None)
 				continue;
 
-			import d.gc.signal;
-			signalThreadSuspend(tc);
+			tc.sendSuspendSignal();
+			// use druntime suspension calls.
+			core_thread_osthread_suspend(t);
 		}
 		else {
-			retry = true;
-			if(alwaysSignal) {
-				// send the signal directly, this is the first time through the
-				// loop. The thread signal handler will register the
-				// threadcache data for subsequent collections and loops
-				import d.gc.signal;
-				import core.sys.posix.pthread;
-				pthread_kill(t.m_addr, SIGSUSPEND);
+			// TODO: remove this code, once we have guarantees the tls gc data
+			// is always initialized when attaching a thread.
+			version(Posix)
+			{
+				retry = true;
+				if(alwaysSignal) {
+					// send the signal directly, this is the first time through the
+					// loop. The thread signal handler will register the
+					// threadcache data for subsequent collections and loops
+					core_thread_osthread_suspend(t);
+				}
 			}
+			else
+				assert(false, "Thread attached, but no tlsGCData!");
 		}
 	}
 
@@ -125,8 +136,8 @@ bool resumeDruntimeThreads(ref uint suspended) {
 		if (ss != SuspendState.Suspended)
 			continue;
 
-		import d.gc.signal;
-		signalThreadResume(tc);
+		tc.sendResumeSignal();
+		core_thread_osthread_resume(t);
 	}
 
 	// update the suspended count

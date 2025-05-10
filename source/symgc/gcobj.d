@@ -42,10 +42,23 @@ private pragma(crt_constructor) void gc_sdc_ctor()
 	_d_register_sdc_gc();
 }
 
+extern(C) void thread_setGCSignals(int suspendSignalNo, int resumeSignalNo) nothrow @nogc;
+
 extern(C) void _d_register_sdc_gc()
 {
-	import d.gc.thread;
-	createProcess();
+	version(Symgc_pthread_hook)
+	{
+		// need to initialize early, as the pthread create hook needs stuff set up.
+		import d.gc.thread;
+		createProcess();
+	}
+	else
+	{
+		// set druntime's signals to match ours, we are going to use their
+		// signal mechanisms. Have to do this before dmain2/thread_init.
+		import d.gc.signal;
+		thread_setGCSignals(SIGSUSPEND, SIGRESUME);
+	}
 
 	import core.gc.registry;
 	registerGCFactory("sdc", &initialize);
@@ -82,6 +95,13 @@ private __gshared SnazzyGC instance = new SnazzyGC;
 
 private GC initializeQuiet()
 {
+	version(Symgc_pthread_hook) { }
+	else {
+		// now it is ok to initialize
+		import d.gc.thread;
+		createProcess();
+	}
+
     // check the config to see if we should set the thread count for scanning.
     import core.gc.config;
     // ignore the thread count if it's the default.

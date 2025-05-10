@@ -107,6 +107,10 @@ public:
 	@property
 	auto suspendState() => state.suspendState;
 
+	auto sendSuspendSignal() => state.sendSuspendSignal;
+
+	auto sendResumeSignal() => state.sendSuspendSignal;
+
 	void initialize(shared(ExtentMap)* emap, shared(Base)* base) {
 		this.emap = CachedExtentMap(emap, base);
 
