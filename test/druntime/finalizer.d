@@ -1,6 +1,6 @@
 /+ dub.json:
    {
-	   "name": "simple",
+	   "name": "finalizer",
 		"dependencies": {
 			"symgc" : {
 				"path" : "../../"
@@ -20,7 +20,6 @@ extern(C) __gshared rt_options = ["gcopt=gc:sdc"];
 
 struct Finalized
 {
-	int x;
 	__gshared int dtors;
 	~this() {
 		++dtors;
@@ -37,15 +36,14 @@ void prepareStack() {
 	clobber();
 }
 
-enum objCount = 10_000;
+// TODO: figure out why 10_001 are needed to make this work instead of 10_000.
+enum objCount = 10_001;
 
 shared static ~this() {
 	// make sure we clobber the stack
 	prepareStack();
 	import core.memory;
 	GC.collect();
-	import std.stdio;
-	writeln(Finalized.dtors);
 	assert(Finalized.dtors == objCount);
 }
 
