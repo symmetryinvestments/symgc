@@ -71,12 +71,13 @@ int main(string[] args)
 {
 	import std.getopt;
 	bool verbose = false;
-	auto helpInformation = getopt(args, "v|verbose", &verbose);
+	bool info = false;
+	auto helpInformation = getopt(args, "v|verbose", &verbose, "i|info", "List and describe tests", &info);
 	if(helpInformation.helpWanted)
 	{
 		defaultGetoptPrinter("Test harness for Symgc integration tests. Specify prefixes of tests to run if desired.\n\tUsage: tester [options] [prefix1] [prefix2] ...",
 				helpInformation.options);
-		return 1;
+		return 0;
 	}
 
 	TestHarness[] tests = dirEntries("base", SpanMode.shallow)
@@ -85,6 +86,12 @@ int main(string[] args)
 		.map!(de => parseTest(de.name))
 		.array;
 	tests.sort!((ref TestHarness a, ref TestHarness b) => a.filename < b.filename);
+	if(info) {
+		// instead of running tests, just list all the tests and the information about them.
+		foreach(th; tests)
+			writeln(i"$(th.filename) - $(th.description)");
+		return 0;
+	}
 
 	auto targets = args[1 .. $];
 	int npassed = 0;
