@@ -42,12 +42,18 @@ TestHarness parseTest(string filename)
 	return harness;
 }
 
-bool runTest(ref TestHarness th, bool verbose)
+bool runTest(ref TestHarness th, bool verbose, bool force)
 {
 	import std.process;
 	write(i"TEST $(th.filename) ...");
 	stdout.flush();
-	auto result = execute(["dub", "--single", th.filename]);
+	auto args = ["dub", "--single"];
+	if(verbose)
+		args ~= "-v";
+	if(force)
+		args ~= "--force";
+	args ~= th.filename;
+	auto result = execute(args);
 	th.retval = result.status;
 	if(th.retval != th.expectedRetval) {
 		writeln(i"FAILED with return code $(th.retval), expected $(th.expectedRetval)");
@@ -72,7 +78,11 @@ int main(string[] args)
 	import std.getopt;
 	bool verbose = false;
 	bool info = false;
-	auto helpInformation = getopt(args, "v|verbose", &verbose, "i|info", "List and describe tests", &info);
+	bool force = false;
+	auto helpInformation = getopt(args,
+			"v|verbose", &verbose,
+			"i|info", "List and describe tests", &info,
+			"f|force", "pass `--force` to dub to ensure rebuilds", &force);
 	if(helpInformation.helpWanted)
 	{
 		defaultGetoptPrinter("Test harness for Symgc integration tests. Specify prefixes of tests to run if desired.\n\tUsage: tester [options] [prefix1] [prefix2] ...",
@@ -109,7 +119,7 @@ int main(string[] args)
 			continue;
 		}
 		++nrun;
-		npassed += th.runTest(verbose: verbose);
+		npassed += th.runTest(verbose: verbose, force: force);
 	}
 	if(nrun == 0)
 	{
