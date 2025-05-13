@@ -4,6 +4,7 @@ import std.algorithm;
 import std.string;
 import std.conv;
 import std.array;
+import std.range;
 
 struct TestHarness
 {
@@ -44,17 +45,19 @@ TestHarness parseTest(string filename)
 bool runTest(ref TestHarness th, bool verbose)
 {
 	import std.process;
+	write(i"TEST $(th.filename) ...");
+	stdout.flush();
 	auto result = execute(["dub", "--single", th.filename]);
 	th.retval = result.status;
 	if(th.retval != th.expectedRetval) {
-		writeln(i"TEST $(th.filename) FAILED with return code $(th.retval), expected $(th.expectedRetval)");
+		writeln(i"FAILED with return code $(th.retval), expected $(th.expectedRetval)");
 		writeln("test output:");
 		writeln(result.output);
 		return false;
 	}
 	else
 	{
-		writeln(i"TEST $(th.filename) PASSED");
+		writeln("PASSED");
 		if(verbose)
 		{
 			writeln("test output:");
@@ -71,21 +74,41 @@ int main(string[] args)
 	auto helpInformation = getopt(args, "v|verbose", &verbose);
 	if(helpInformation.helpWanted)
 	{
-		defaultGetoptPrinter("Test harness for Symgc integration tests.",
+		defaultGetoptPrinter("Test harness for Symgc integration tests. Specify prefixes of tests to run if desired.\n\tUsage: tester [options] [prefix1] [prefix2] ...",
 				helpInformation.options);
 		return 1;
 	}
+
 	TestHarness[] tests = dirEntries("base", SpanMode.shallow)
+		.chain(dirEntries("druntime", SpanMode.shallow))
 		.filter!(de => de.isFile && de.name.endsWith(".d"))
 		.map!(de => parseTest(de.name))
 		.array;
 	tests.sort!((ref TestHarness a, ref TestHarness b) => a.filename < b.filename);
 
+	auto targets = args[1 .. $];
 	int npassed = 0;
+	int nrun = 0;
 	foreach(ref th; tests)
 	{
+		bool doRun = targets.length == 0;
+		foreach(t; targets) {
+			if(th.filename.startsWith(t)) {
+				doRun = true;
+			}
+		}
+		if(!doRun) {
+			if(verbose) writeln("skipping unselected test ", th.filename);
+			continue;
+		}
+		++nrun;
 		npassed += th.runTest(verbose: verbose);
 	}
-	writeln(i"SUMMARY: $(tests.length) Tests run, $(npassed) PASSED, $(tests.length - npassed) FAILED");
-	return npassed == tests.length ? 0 : 1;
+	if(nrun == 0)
+	{
+		writeln("NO TESTS SELECTED, check prefix filters: ", targets);
+		return 1;
+	}
+	writeln(i"SUMMARY: $(nrun) Tests run, $(npassed) PASSED, $(nrun - npassed) FAILED, $(tests.length - nrun) SKIPPED");
+	return npassed == nrun ? 0 : 1;
 }
