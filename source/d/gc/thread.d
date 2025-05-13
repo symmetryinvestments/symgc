@@ -6,6 +6,10 @@ import d.gc.tstate;
 import d.gc.types;
 
 void createProcess() {
+	import d.gc.base;
+	import d.gc.arena;
+	Arena.initializeArenaStorage(gBase);
+
 	enterBusyState();
 	scope(exit) exitBusyState();
 
