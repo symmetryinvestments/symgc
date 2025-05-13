@@ -108,6 +108,11 @@ void __sd_gc_finalize(void* ptr, size_t usedSpace, void* finalizer) {
 		}
 		else
 		{
+			// NOTE: we always add 1 byte for buffer space regardless of the
+			// used size when we have an appendable block. This means, we
+			// always have to subtract 1 when finalizing.
+			--usedSpace;
+
 			// context is a typeinfo pointer, which can be used to destroy the
 			// elements in the block.
 			auto ti = cast(TypeInfo)finalizer;
