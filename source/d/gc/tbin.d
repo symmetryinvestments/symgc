@@ -605,6 +605,7 @@ uint computeThreadCacheSize() {
 
 	import d.gc.emap;
 	static shared ExtentMap emapStorage;
+	emapStorage.initialize(*base);
 	auto emap = CachedExtentMap(&emapStorage, base);
 
 	import d.gc.region;
@@ -745,6 +746,7 @@ uint computeThreadCacheSize() {
 
 	import d.gc.emap;
 	static shared ExtentMap emapStorage;
+	emapStorage.initialize(*base);
 	auto emap = CachedExtentMap(&emapStorage, base);
 
 	import d.gc.region;

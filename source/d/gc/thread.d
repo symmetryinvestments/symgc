@@ -6,6 +6,10 @@ import d.gc.tstate;
 import d.gc.types;
 
 void createProcess() {
+	import d.gc.emap;
+	import d.gc.base;
+	gExtentMap.initialize(gBase);
+
 	enterBusyState();
 	scope(exit) exitBusyState();
 

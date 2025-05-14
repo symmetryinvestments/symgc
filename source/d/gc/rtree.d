@@ -37,7 +37,12 @@ static assert((Level0Mask & BlockPointerMask) == 0,
 
 struct RTree(T) {
 private:
-	Node[Level0Size] nodes;
+	Node[Level0Size]* _nodeStorage;
+
+	@property
+	ref shared(Node[Level0Size]) nodes() shared {
+		return *_nodeStorage;
+	}
 
 	import d.sync.mutex;
 	Mutex initMutex;
@@ -189,6 +194,13 @@ public:
 				ptr += PageSize;
 			}
 		}
+	}
+
+	void initialize(ref shared Base base) shared {
+		// allocate the nodes for use. This must be called before any other
+		// methods are used.
+		_nodeStorage = cast(typeof(_nodeStorage))
+			base.reserveAddressSpace(typeof(*_nodeStorage).sizeof);
 	}
 
 private:
@@ -411,6 +423,7 @@ static subKey(void* ptr, uint level) {
 	scope(exit) base.clear();
 
 	static shared RTree!ulong rt;
+	rt.initialize(base);
 	RTreeCache!ulong cache;
 
 	auto p = cast(void*) 0x56789abcd000;
@@ -440,6 +453,7 @@ static subKey(void* ptr, uint level) {
 	scope(exit) base.clear();
 
 	static shared RTree!ulong rt;
+	rt.initialize(base);
 	RTreeCache!ulong cache;
 
 	// Add one page descriptor in the tree.
@@ -491,6 +505,7 @@ static subKey(void* ptr, uint level) {
 	scope(exit) base.clear();
 
 	static shared RTree!ulong rt;
+	rt.initialize(base);
 	RTreeCache!ulong cache;
 
 	// Add one page descriptor in the tree.
@@ -556,6 +571,7 @@ static subKey(void* ptr, uint level) {
 	scope(exit) base.clear();
 
 	static shared RTree!ulong rt;
+	rt.initialize(base);
 	RTreeCache!ulong cache;
 
 	enum L1Size = RTreeCache!ulong.L1Size;
