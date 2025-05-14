@@ -4,6 +4,8 @@ module symgc.gcobj;
 import core.gc.gcinterface;
 static import core.memory;
 
+import core.thread.threadbase : ThreadBase;
+
 import core.stdc.string : memset;
 
 // when running unittests and druntime is involved, set the GC to the symmetry GC
@@ -37,6 +39,18 @@ extern(C) nothrow {
 
 enum TYPEINFO_IN_BLOCK = cast(void*)1;
 
+void initSDCThread(ThreadBase t) nothrow @nogc
+{
+	import d.gc.thread;
+	// TODO: see if this can be correctly marked
+	// createThread!false();
+	(cast(void function() nothrow @nogc)&createThread!false)();
+
+	// set up the thread to point at our thread cache;
+	import d.gc.tcache;
+	t.tlsGCData = &threadCache;
+}
+
 private pragma(crt_constructor) void gc_sdc_ctor()
 {
 	_d_register_sdc_gc();
@@ -61,8 +75,16 @@ extern(C) void _d_register_sdc_gc()
 	}
 
 	import core.gc.registry;
-	registerGCFactory("sdc", &initialize);
-	registerGCFactory("sdcq", &initializeQuiet);
+	static if(__traits(compiles, registerGCFactory("sdc", &initialize, &initSDCThread)))
+	{
+		registerGCFactory("sdc", &initialize, &initSDCThread);
+		registerGCFactory("sdcq", &initializeQuiet, &initSDCThread);
+	}
+	else
+	{
+		registerGCFactory("sdc", &initialize);
+		registerGCFactory("sdcq", &initializeQuiet);
+	}
 }
 
 shared static this()
@@ -403,6 +425,23 @@ final class SnazzyGC : GC
 	bool shrinkArrayUsed(void[] slice, size_t existingUsed, bool atomic = false) nothrow
 	{
 		return __sd_gc_hook_shrink_array_used(slice.ptr, slice.length, existingUsed);
+	}
+
+	void initThread(ThreadBase t) nothrow @nogc
+	{
+		initSDCThread(t);
+	}
+
+	void cleanupThread(ThreadBase t) nothrow @nogc
+	{
+		// set up the thread to point at our thread cache;
+		import d.gc.tcache;
+		if (t.tlsGCData is &threadCache)
+		{
+			import d.gc.thread;
+			(cast(void function() nothrow @nogc)&destroyThread)();
+			t.tlsGCData = null;
+		}
 	}
 }
 
