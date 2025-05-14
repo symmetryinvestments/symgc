@@ -62,8 +62,16 @@ extern(C) void _d_register_sdc_gc()
 	createProcess();
 
 	import core.gc.registry;
-	registerGCFactory("sdc", &initialize, &initSDCThread);
-	registerGCFactory("sdcq", &initializeQuiet, &initSDCThread);
+	static if(__traits(compiles, registerGCFactory("sdc", &initialize, &initSDCThread)))
+	{
+		registerGCFactory("sdc", &initialize, &initSDCThread);
+		registerGCFactory("sdcq", &initializeQuiet, &initSDCThread);
+	}
+	else
+	{
+		registerGCFactory("sdc", &initialize);
+		registerGCFactory("sdcq", &initializeQuiet);
+	}
 }
 
 shared static this()
