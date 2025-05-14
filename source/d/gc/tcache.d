@@ -195,7 +195,7 @@ public:
 			return null;
 		}
 
-		asize = getAllocSize(max(asize, 2 * Quantum));
+		asize = max(asize, 2 * Quantum);
 		assert(sizeClassSupportsMetadata(getSizeClass(asize)),
 		       "allocAppendable got size class without metadata support!");
 
@@ -380,9 +380,12 @@ private:
 			return null;
 		}
 
+		import core.stdc.string : memset;
 		if (unlikely(zero)) {
-			import core.stdc.string : memset;
 			memset(ptr, 0, slotSize);
+		} else if (containsPointers) {
+			// Clear out any data that was not requested.
+			memset(ptr + size, 0, slotSize - size);
 		}
 
 		triggerAllocationEvent(slotSize);
