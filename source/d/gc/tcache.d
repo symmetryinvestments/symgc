@@ -1737,7 +1737,8 @@ private:
 		// use a static struct to get the correct typeinfo
 		static struct Destroyer(size_t realSize)
 		{
-			ubyte[realSize] data;
+			// subtract 1 since we add 1 for allocating a block with metadata
+			ubyte[realSize-1] data;
 			~this() { destroyfn(&this, realSize); }
 		}
 
