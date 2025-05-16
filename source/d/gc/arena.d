@@ -1,7 +1,5 @@
 module d.gc.arena;
 
-version(linux):
-
 import d.gc.emap;
 import d.gc.extent;
 import d.gc.size;
@@ -151,17 +149,25 @@ public:
 		import core.stdc.stdlib : alloca;
 		auto dallocSlabs = cast(Extent**) alloca(worklist.length * PointerSize);
 
-		uint ndalloc = 0;
-		scope(success) if (ndalloc > 0) {
-			foreach (i; 0 .. ndalloc) {
-				// FIXME: batch free to go through the lock once using freeExtentLocked.
-				filler.freeExtent(emap, dallocSlabs[i]);
-			}
-		}
+		auto doTheRest() nothrow {
 
-		auto ec = pds[0].extentClass;
-		auto sc = ec.sizeClass;
-		return bins[sc].batchFree(worklist, pds, dallocSlabs, ndalloc);
+		try {
+			uint ndalloc = 0;
+			scope(success) if (ndalloc > 0) {
+				foreach (i; 0 .. ndalloc) {
+					// FIXME: batch free to go through the lock once using freeExtentLocked.
+					filler.freeExtent(emap, dallocSlabs[i]);
+				}
+			}
+
+			auto ec = pds[0].extentClass;
+			auto sc = ec.sizeClass;
+			return bins[sc].batchFree(worklist, pds, dallocSlabs, ndalloc);
+		} catch(Exception e) {
+			assert(false, "Exception in GC!");
+		}
+		}
+		return doTheRest();
 	}
 
 	/**

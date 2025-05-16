@@ -1,7 +1,5 @@
 module d.gc.thread;
 
-version(linux):
-
 import d.gc.capi;
 import d.gc.tcache;
 import d.gc.tstate;
@@ -11,12 +9,13 @@ void createProcess() {
 	enterBusyState();
 	scope(exit) exitBusyState();
 
-	import d.gc.fork;
-	setupFork();
+	version(linux) {
+		import d.gc.fork;
+		setupFork();
 
-	import d.gc.signal;
-	setupSignals();
-
+		import d.gc.signal;
+		setupSignals();
+	}
 	initThread();
 
 	version(Symgc_pthread_hook) {
@@ -97,6 +96,18 @@ void restartTheWorld() {
 	gThreadState.restartTheWorld();
 }
 
+void suspendThreadDelayedNoSignals(d.gc.tstate.ThreadState* tstate) {
+	gThreadState.suspendThreadDelayedNoSignals(tstate);
+}
+
+void delayedThreadInc() {
+	gThreadState.delayedThreadInc();
+}
+
+void waitForDelayedThreads() {
+	gThreadState.waitForDelayedThreads();
+}
+
 void threadScan(ScanDg scan) {
 	// Scan the registered TLS segments.
 	foreach (s; threadCache.tlsSegments) {
@@ -133,6 +144,7 @@ private:
 
 	uint registeredThreadCount = 0;
 	uint suspendedThreadCount = 0;
+	uint delayedThreadCount = 0;
 
 	Mutex mThreadList;
 	ThreadRing registeredThreads;
@@ -201,14 +213,53 @@ public:
 		uint count;
 
 		while (suspendRunningThreads(count++)) {
-			import core.sys.posix.sched;
+			import symgc.thread;
 			sched_yield();
 		}
+
+		// now, wait for any delayed threads
+		waitForDelayedThreads();
+	}
+
+	void delayedThreadDec() shared {
+		mStats.lock();
+		scope(exit) mStats.unlock();
+
+		*(cast(uint*)&this.delayedThreadCount) -= 1;
+	}
+
+	void delayedThreadInc() shared {
+		mStats.lock();
+		scope(exit) mStats.unlock();
+
+		*(cast(uint*)&this.delayedThreadCount) += 1;
+	}
+
+	void waitForDelayedThreads() shared {
+		mStats.lock();
+		scope(exit) mStats.unlock();
+
+		mStats.waitFor(
+			&(cast(ThreadState*)&this).noDelayedThreads
+		);
+	}
+
+	bool noDelayedThreads() => delayedThreadCount == 0;
+
+	void suspendThreadDelayedNoSignals(d.gc.tstate.ThreadState* tstate) shared {
+		// We are no longer delayed, can be suspended
+		delayedThreadDec();
+
+		// finally, lock the stop-the-world mutex, and resume operations. We will
+		// not proceed until the STW mutex is unlocked.
+		stopTheWorldLock.sharedLock();
+		tstate.onResumeSignal();
+		stopTheWorldLock.sharedUnlock();
 	}
 
 	void restartTheWorld() shared {
 		while (resumeSuspendedThreads()) {
-			import core.sys.posix.sched;
+			import symgc.thread;
 			sched_yield();
 		}
 

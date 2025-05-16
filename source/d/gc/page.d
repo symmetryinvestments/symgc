@@ -1,5 +1,4 @@
 module d.gc.page;
-version(linux):
 
 import d.gc.allocclass;
 import d.gc.arena;

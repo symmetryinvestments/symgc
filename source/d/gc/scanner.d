@@ -1,5 +1,4 @@
 module d.gc.scanner;
-version(linux):
 
 import symgc.intrinsics;
 
@@ -53,11 +52,11 @@ public:
 	}
 
 	void mark() shared {
-		import core.sys.posix.pthread;
+		import symgc.thread;
 		auto threadCount = activeThreads - 1;
 		import core.stdc.stdlib : alloca;
 		auto threadsPtr =
-			cast(pthread_t*) alloca(pthread_t.sizeof * threadCount);
+			cast(ThreadHandle*) alloca(ThreadHandle.sizeof * threadCount);
 		auto threads = threadsPtr[0 .. threadCount];
 
 		static void markThreadEntry(void* ctx) {
@@ -69,7 +68,6 @@ public:
 
 		// First thing, start the worker threads, so they can do work ASAP.
 		foreach (ref tid; threads) {
-			import symgc.thread;
 			createGCThread(&tid, &markThreadEntry, cast(void*) &this);
 		}
 
@@ -86,8 +84,7 @@ public:
 		threadCache.free(cast(void*) worklist.ptr);
 
 		foreach (tid; threads) {
-			void* ret;
-			pthread_join(tid, &ret);
+			joinGCThread(tid);
 		}
 	}
 

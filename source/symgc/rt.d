@@ -4,8 +4,6 @@
 // druntime.
 module symgc.rt;
 
-version(linux):
-
 import core.internal.traits;
 alias callWithStackShell = externDFunc!("core.thread.osthread.callWithStackShell", void function(scope void delegate(void*) nothrow) nothrow);
 void __sd_gc_push_registers(scope void delegate(void*) dg)
@@ -18,6 +16,8 @@ alias druntimeGetStackBottom = externDFunc!("core.thread.osthread.getStackBottom
 void* getStackBottom() {
 	return druntimeGetStackBottom();
 }
+
+version(Symgc_pthread_hook):
 
 void registerGlobalSegments() {
 	import core.sys.linux.link;

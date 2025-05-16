@@ -1,7 +1,5 @@
 module d.gc.tcache;
 
-version(linux):
-
 import d.gc.base;
 import d.gc.emap;
 import d.gc.ring;
@@ -114,6 +112,10 @@ public:
 	auto sendSuspendSignal() => state.sendSuspendSignal();
 
 	auto sendResumeSignal() => state.sendResumeSignal();
+
+	auto onSuspendSignal() => state.onSuspendSignal();
+
+	auto markSuspended() => state.markSuspended();
 
 	void initialize(shared(ExtentMap)* emap, shared(Base)* base) {
 		this.emap = CachedExtentMap(emap, base);
@@ -800,8 +802,17 @@ private:
 		 * of glibc thanks to rseqs, but we might want to find
 		 * an alternative on other systems.
 		 */
-		import core.sys.linux.sched;
-		return sched_getcpu();
+		 version(linux) {
+			import core.sys.linux.sched;
+			return sched_getcpu();
+		 }
+		 else version(Windows) {
+			import core.sys.windows.winntex;
+			PROCESSOR_NUMBER pnum;
+			GetCurrentProcessorNumberEx(&pnum);
+			// Each processor group has 64 logical cores. So a 6-bit number with the group id added as the upper bits.
+			return (pnum.Group << 6) + pnum.Number;
+		 }
 	}
 
 	auto chooseArena(bool containsPointers) {

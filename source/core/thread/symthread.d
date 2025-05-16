@@ -1,7 +1,6 @@
 // we have to put this in the core.thread package to access thread package internals
 module core.thread.symthread;
 
-version(linux):
 import core.thread.osthread;
 import core.thread.threadbase;
 import core.thread.types;
@@ -12,10 +11,6 @@ private {
 	alias DruntimeScanDg = void delegate(void* pstart, void* pend) nothrow;
 	alias rt_tlsgc_scan =
 	    externDFunc!("rt.tlsgc.scan", void function(void*, scope DruntimeScanDg) nothrow);
-    import core.internal.traits : externDFunc;
-    alias DruntimeScanDg = void delegate(void* pstart, void* pend) nothrow;
-    alias rt_tlsgc_scan =
-        externDFunc!("rt.tlsgc.scan", void function(void*, scope DruntimeScanDg) nothrow);
 	// TODO: wish this was package...
 	alias core_thread_osthread_suspend =
 		externDFunc!("core.thread.osthread.suspend", bool function(Thread) nothrow @nogc);
@@ -31,58 +26,130 @@ private Thread toThread(return scope ThreadBase t) @trusted nothrow @nogc pure
 bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 	import d.gc.tcache;
 	import d.gc.tstate;
-	Thread t = ThreadBase.sm_tbeg.toThread;
-	auto self = Thread.getThis;
 
 	suspended = 0;
 	bool retry = false;
 
-	while (t)
+	static struct ThreadIterator
 	{
-		auto tn = t.next.toThread;
-		scope(exit) t = tn;
-		if (!t.isRunning)
+		this(Thread start)
 		{
-			Thread.remove(t);
-			continue;
+			self = Thread.getThis;
+			tn = start;
+			popFront();
 		}
 
-		// skip current thread, we don't need to suspend it.
-		if (t is self) {
-			continue;
-		}
+		Thread t;
+		Thread tn;
+		Thread self;
+		bool empty() => t !is null;
+		Thread front() => t;
+		void popFront()
+		{
+			t = tn;
+			while (t !is null) {
 
+				if(t is self)
+				{
+					t = t.next.toThread;
+					continue;
+				}
+
+				if (!t.isRunning())
+				{
+					auto tn = t.next.toThread;
+					Thread.remove(t);
+					t = tn;
+					continue;
+				}
+
+				this.tn = t.next.toThread;
+				return;
+			}
+
+			// here if t is now null.
+			this.tn = null;
+		}
+	}
+
+	foreach(t; ThreadIterator(ThreadBase.sm_tbeg.toThread))
+	{
 		auto tc = cast(ThreadCache*) t.tlsGCData();
-		// determine if this thread is suspended or should be suspended.
-		if (tc !is null) {
-			auto ss = tc.suspendState;
 
-			suspended += ss == SuspendState.Suspended;
-			retry |= ss != SuspendState.Suspended;
-
-			if (ss != SuspendState.None)
-				continue;
-
-			tc.sendSuspendSignal();
-			// use druntime suspension calls.
-			core_thread_osthread_suspend(t);
-		}
-		else {
-			// TODO: remove this code, once we have guarantees the tls gc data
-			// is always initialized when attaching a thread.
-			version(Posix)
+		version (Posix)
+		{
+			// determine if this thread is suspended or should be suspended.
+			if (tc !is null)
 			{
+				auto ss = tc.suspendState;
+
+				suspended += ss == SuspendState.Suspended;
+				retry |= ss != SuspendState.Suspended;
+
+				if (ss != SuspendState.None)
+					continue;
+
+				tc.sendSuspendSignal();
+				// use druntime suspension calls.
+				core_thread_osthread_suspend(t);
+			}
+			else
+			{
+				// TODO: remove this code, once we have guarantees the tls gc data
+				// is always initialized when attaching a thread.
 				retry = true;
-				if(alwaysSignal) {
+				if (alwaysSignal)
+				{
 					// send the signal directly, this is the first time through the
 					// loop. The thread signal handler will register the
 					// threadcache data for subsequent collections and loops
 					core_thread_osthread_suspend(t);
 				}
 			}
-			else
-				assert(false, "Thread attached, but no tlsGCData!");
 		}
+		else version(Windows)
+		{
+			if (tc is null) {
+				assert(0, "tlsGCData was not set for this thread!");
+			}
+
+			// use the same states to make the code consistent.
+			tc.sendSuspendSignal();
+
+			if (core_thread_osthread_suspend(t)) {
+				if (!tc.onSuspendSignal()) {
+					import d.gc.thread : delayedThreadInc;
+					delayedThreadInc();
+					// delayed, resume the thread, and increment the delayed thread count.
+					core_thread_osthread_resume(t);
+					retry = true;
+					continue;
+				}
+				++suspended;
+			}
+		}
+	}
+
+	version(Windows) if (retry) {
+		// in this case, retry means some threads were delayed. need to wait for them,
+		// we are not going to return until all threads are suspended.
+		retry = false;
+		// wait for all delayed threads to be ready for suspension
+		import d.gc.thread : waitForDelayedThreads;
+		waitForDelayedThreads();
+		foreach(t; ThreadIterator(ThreadBase.sm_tbeg.toThread))
+		{
+			auto tc = cast(ThreadCache*) t.tlsGCData();
+			assert (tc !is null); // not possible at this point.
+			if (tc.suspendState != SuspendState.Suspended) {
+				if (!core_thread_osthread_suspend(t)) {
+					assert(0, "could not suspend thread");
+				}
+				tc.markSuspended();
+				++suspended;
+			}
+		}
+
 	}
 
 	// suspend all the threads that are not us, but also record that we suspended "ourself"

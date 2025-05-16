@@ -1,8 +1,6 @@
 // D runtime hook to include symgc as an option for garbage collection.
 module symgc.gcobj;
 
-version(linux):
-
 import core.gc.gcinterface;
 static import core.memory;
 
@@ -68,7 +66,7 @@ extern(C) void _d_register_sdc_gc()
 		import d.gc.thread;
 		createProcess();
 	}
-	else
+	else version(Posix)
 	{
 		// set druntime's signals to match ours, we are going to use their
 		// signal mechanisms. Have to do this before dmain2/thread_init.
@@ -84,8 +82,11 @@ extern(C) void _d_register_sdc_gc()
 	}
 	else
 	{
-		registerGCFactory("sdc", &initialize);
-		registerGCFactory("sdcq", &initializeQuiet);
+		version(linux) {
+			registerGCFactory("sdc", &initialize);
+			registerGCFactory("sdcq", &initializeQuiet);
+		}
+		else static assert(false, "No support for threadInit in gcinterface!");
 	}
 }
 

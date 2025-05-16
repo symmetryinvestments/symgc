@@ -79,8 +79,6 @@ immutable BinInfo[BinCount] binInfos = getBinInfos();
 
 enum InvalidBinID = 0xff;
 
-version(linux):
-
 
 
 struct SlabEntry {

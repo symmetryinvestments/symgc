@@ -1,7 +1,5 @@
 module d.gc.stack;
 
-version(linux):
-
 import d.gc.types;
 import symgc.rt;
 

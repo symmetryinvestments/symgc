@@ -1,7 +1,5 @@
 module d.gc.tbin;
 
-version(linux):
-
 import d.gc.arena;
 import d.gc.emap;
 import d.gc.sizeclass;

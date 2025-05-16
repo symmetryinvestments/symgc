@@ -3,16 +3,14 @@ module symgc.test;
 
 version(Symgc_testing):
 
-public import symgc.thread : ThreadHandle;
+public import symgc.thread : ThreadHandle, sched_yield;
 
-// functions to create and join threads
+// functions to create and join low level threads
 version(linux) {
-	public import core.sys.posix.sched: sched_yield;
 	public import core.sys.posix.unistd : sleep, usleep;
 }
 else version(Windows) {
 	import core.sys.windows.winbase;
-	alias sched_yield = core.sys.windows.winbase.SwitchToThread;
 	void sleep(int seconds) {
 		Sleep(1000 * seconds);
 	}
@@ -58,5 +56,10 @@ void* joinThread(ThreadHandle tid) {
 		GetExitCodeThread(tid, &result);
 		CloseHandle(tid);
 		return cast(void*)result;
+	}
+}
+
+version(Windows) {
+	void main() {
 	}
 }

@@ -1,5 +1,4 @@
 module d.gc.collector;
-version(linux):
 
 import d.gc.arena;
 import d.gc.emap;

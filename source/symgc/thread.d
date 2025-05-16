@@ -3,17 +3,18 @@ module symgc.thread;
 version(Windows) {
 	import core.sys.windows.winnt : HANDLE;
 	import core.sys.windows.windef : DWORD;
-	public import core.sys.windows.winbase : currentThreadHandle = GetCurrentThread;
+	import core.sys.windows.winbase;
+	alias currentThreadHandle = GetCurrentThread;
+	alias sched_yield = SwitchToThread;
 	alias ThreadHandle = HANDLE;
 	private enum THREAD_RETURN_VALUE = DWORD(0);
 } else version(linux) {
 	import core.sys.posix.pthread : pthread_t, pthread_self;
 	alias ThreadHandle = pthread_t;
 	alias currentThreadHandle = pthread_self;
+	public import core.sys.posix.sched: sched_yield;
 	private enum THREAD_RETURN_VALUE = null;
 }
-
-version(linux):
 
 import d.gc.thread;
 
@@ -40,6 +41,22 @@ bool createGCThread(TSR)(ThreadHandle* thread, TSR start_routine, void* arg) {
 		import core.sys.windows.winbase : LPTHREAD_START_ROUTINE, CreateThread, INVALID_HANDLE_VALUE;
 		*thread = CreateThread(null, 0, cast(LPTHREAD_START_ROUTINE) runner.getFunction!false(), runner, 0, null);
 		return *thread != INVALID_HANDLE_VALUE;
+	}
+}
+
+void joinGCThread(ThreadHandle tid) {
+	version(linux) {
+		import core.sys.posix.pthread;
+		void* result;
+		pthread_join(tid, &result);
+	}
+	else version(Windows) {
+		if (WaitForSingleObject(tid, INFINITE) != WAIT_OBJECT_0) {
+			assert(false, "Failed to join thread");
+		}
+		uint result;
+		GetExitCodeThread(tid, &result);
+		CloseHandle(tid);
 	}
 }
 

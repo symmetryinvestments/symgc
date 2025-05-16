@@ -32,6 +32,12 @@
 			"versions" : [
 				"Symgc_pthread_hook"
 			]
+		},
+		"windowsdebug" : {
+			"targetType" : "executable",
+			"versions" : [
+				"Symgc_druntime_hooks"
+			]
 		}
 	},
 	"buildTypes" : {

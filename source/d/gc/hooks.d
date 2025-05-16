@@ -1,7 +1,5 @@
 module d.gc.hooks;
 
-version(linux):
-
 import d.gc.types;
 
 // ensure that at least one of pthread_hook or druntime_hook must be true (both
@@ -17,8 +15,10 @@ else {
 extern(C):
 
 // druntime API.
-bool thread_preSuspend(void* stackTop);
-bool thread_postSuspend();
+version(Posix) {
+	bool thread_preSuspend(void* stackTop);
+	bool thread_postSuspend();
+}
 
 void thread_preStopTheWorld();
 void thread_postRestartTheWorld();
@@ -51,7 +51,7 @@ private void arenaFree(ref CachedExtentMap emap, void* ptr) {
 
 void __sd_gc_pre_suspend_hook(void* stackTop) {
 	version(Symgc_druntime_hooks) {
-		if(!thread_preSuspend(stackTop)) {
+		version(Posix) if(!thread_preSuspend(stackTop)) {
 			return;
 		}
 		version(Symgc_pthread_hook) {
@@ -80,7 +80,7 @@ void __sd_gc_pre_suspend_hook(void* stackTop) {
 }
 
 void __sd_gc_post_suspend_hook() {
-	version(Symgc_druntime_hooks) {
+	version(Symgc_druntime_hooks) version(Posix) {
 		thread_postSuspend();
 	}
 }
