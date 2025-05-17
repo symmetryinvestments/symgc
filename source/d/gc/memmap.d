@@ -9,7 +9,14 @@ version(linux) {
 	// not included in druntime for some reason
 	enum MADV_FREE = 8;
 }
+else version(Windows) {
+	import core.sys.windows.winbase;
+	import core.sys.windows.winnt;
+}
 
+// Note, this RESERVES address space, but does not COMMIT memory.
+// On OSes where you must commit memory in order to use it, call
+// pages_commit on the memory to make sure it's wired.
 void* pages_map(void* addr, size_t size, size_t alignment) {
 	assert(alignment >= PageSize && isPow2(alignment), "Invalid alignment!");
 	assert(isAligned(addr, alignment), "Invalid addr!");
@@ -48,44 +55,87 @@ void* pages_map(void* addr, size_t size, size_t alignment) {
 		// size_t wrapped around!
 		return null;
 	}
+	do {
 
-	ret = os_pages_map(null, asize, alignment);
-	if (ret is null) {
-		return null;
+		auto pages = os_pages_map(null, asize, alignment);
+		if (pages is null) {
+			return null;
+		}
+
+		auto leadSize = alignUpOffset(pages, alignment);
+		version (linux) {
+			if (leadSize > 0) {
+				pages_unmap(pages, leadSize);
+			}
+
+			assert(asize >= size + leadSize);
+			auto trailSize = asize - leadSize - size;
+			if (trailSize) {
+				pages_unmap(pages + leadSize + size, trailSize);
+			}
+			ret = pages + leadSize;
+		} else version (Windows) {
+			pages_unmap(pages, asize);
+
+			ret = os_pages_map(pages + leadSize, size, alignment);
+
+			if (ret && ret !is pages + leadSize) {
+				// not aligned how we need
+				pages_unmap(ret, size);
+				ret = null;
+			}
+		}
+	} while(ret is null);
+
+	return ret;
+}
+
+void pages_commit(void* addr, size_t size) {
+	version(Windows) {
+		if (size == 0) {
+			return;
+		}
+		auto ret = VirtualAlloc(addr, size, MEM_COMMIT, PAGE_READWRITE);
+		assert(ret !is null, "Could not commit memory!");
+		assert(ret is addr, "MEM_COMMIT moved alloction!");
 	}
-
-	auto leadSize = alignUpOffset(ret, alignment);
-	if (leadSize > 0) {
-		pages_unmap(ret, leadSize);
-	}
-
-	assert(asize >= size + leadSize);
-	auto trailSize = asize - leadSize - size;
-	if (trailSize) {
-		pages_unmap(ret + leadSize + size, trailSize);
-	}
-
-	return ret + leadSize;
+	// linux does not need explicit commit
 }
 
 void pages_unmap(void* addr, size_t size) {
-	auto ret = munmap(addr, size);
-	assert(ret == 0, "munmap failed!");
+	version(linux) {
+		auto ret = munmap(addr, size);
+		assert(ret == 0, "munmap failed!");
+	}
+	else version(Windows) {
+		auto ret = VirtualFree(addr, 0, MEM_RELEASE);
+		assert(ret, "VirtualFree failed!");
+	}
 }
 
 void pages_purge(void* addr, size_t size) {
-	auto ret = madvise(addr, size, MADV_DONTNEED);
-	assert(ret == 0, "madvise failed!");
+	version(linux) {
+		auto ret = madvise(addr, size, MADV_DONTNEED);
+		assert(ret == 0, "madvise failed!");
+	} else version(Windows) {
+		VirtualFree(addr, size, MEM_DECOMMIT);
+	}
 }
 
 void pages_purge_lazy(void* addr, size_t size) {
-	auto ret = madvise(addr, size, MADV_FREE);
-	assert(ret == 0, "madvise failed!");
+	version (linux) {
+		auto ret = madvise(addr, size, MADV_FREE);
+		assert(ret == 0, "madvise failed!");
+	} else version (Windows) {
+		VirtualAlloc(addr, size, MEM_RESET, PAGE_READWRITE);
+	}
 }
 
 void pages_zero(void* addr, size_t size) {
 	if (size >= PurgePageThresoldSize) {
+		// Purging and recommitting should reset the data to 0.
 		pages_purge(addr, size);
+		pages_commit(addr, size);
 	} else {
 		import core.stdc.string;
 		memset(addr, 0, size);
@@ -93,32 +143,45 @@ void pages_zero(void* addr, size_t size) {
 }
 
 void pages_hugify(void* addr, size_t size) {
-	auto ret = madvise(addr, size, MADV_HUGEPAGE);
-	assert(ret == 0, "madvise failed!");
+	version(linux) {
+		auto ret = madvise(addr, size, MADV_HUGEPAGE);
+		assert(ret == 0, "madvise failed!");
+	}
 }
 
 void pages_dehugify(void* addr, size_t size) {
-	auto ret = madvise(addr, size, MADV_NOHUGEPAGE);
-	assert(ret == 0, "madvise failed!");
+	version(linux) {
+		auto ret = madvise(addr, size, MADV_NOHUGEPAGE);
+		assert(ret == 0, "madvise failed!");
+	}
 }
 
 private:
-
-enum PagesFDTag = -1;
-enum MMapFlags = MAP_PRIVATE | MAP_ANONYMOUS;
 
 void* os_pages_map(void* addr, size_t size, size_t alignment) {
 	assert(alignment >= PageSize && isPow2(alignment), "Invalid alignment!");
 	assert(isAligned(addr, alignment), "Invalid addr!");
 	assert(size > 0 && isAligned(size, PageSize), "Invalid size!");
 
-	auto ret =
-		mmap(addr, size, PROT_READ | PROT_WRITE, MMapFlags, PagesFDTag, 0);
-	assert(ret !is null);
+	version(linux) {
+		enum PagesFDTag = -1;
+		enum MMapFlags = MAP_PRIVATE | MAP_ANONYMOUS;
 
-	auto MAP_FAILED = cast(void*) -1L;
-	if (ret is MAP_FAILED) {
-		return null;
+		auto ret =
+			mmap(addr, size, PROT_READ | PROT_WRITE, MMapFlags, PagesFDTag, 0);
+		assert(ret !is null);
+
+		enum MAP_FAILED = cast(void*) -1L;
+		if (ret is MAP_FAILED) {
+			return null;
+		}
+	}
+	else version(Windows) {
+		auto ret =
+			VirtualAlloc(addr, size, MEM_RESERVE, PAGE_READWRITE);
+		if (ret is null) {
+			return null;
+		}
 	}
 
 	if (addr is null || ret is addr) {

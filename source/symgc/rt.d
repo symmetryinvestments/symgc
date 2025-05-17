@@ -17,6 +17,8 @@ void* getStackBottom() {
 	return druntimeGetStackBottom();
 }
 
+version(Symgc_pthread_hook):
+
 void registerGlobalSegments() {
 	import core.sys.linux.link;
 

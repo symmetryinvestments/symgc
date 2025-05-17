@@ -1,12 +1,15 @@
 {
 	"authors": [
 		"Steven Schveighoffer",
-        "Amaury Sachet"
+		"Amaury Sachet"
 	],
 	"copyright": "Copyright © 2025, Steven Schveighoffer, Amaury Sachet",
 	"description": "SDC Garbage collector, ported to dmd",
 	"license": "MIT",
 	"name": "symgc",
+	"libs-windows" : [
+		"synchronization"
+	],
 	"configurations" : {
 		"standard" : {
 			"targetType": "library",
@@ -31,6 +34,12 @@
 			"targetType": "library",
 			"versions" : [
 				"Symgc_pthread_hook"
+			]
+		},
+		"windowsdebug" : {
+			"targetType" : "executable",
+			"versions" : [
+				"Symgc_druntime_hooks"
 			]
 		}
 	},

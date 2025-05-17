@@ -1,12 +1,31 @@
-module d.sync.futex.waiter;
-version(linux):
+module d.sync.win32.waiter;
+
+version(Windows):
 
 import d.sync.atomic;
-import d.sync.futex.futex;
 
 import core.stdc.errno;
 
-struct FutexWaiter {
+import core.sys.windows.windows;
+
+extern(Windows) {
+	bool WaitOnAddress(
+		VOID* Address,
+		PVOID CompareAddress,
+		SIZE_T AddressSize,
+		DWORD dwMilliseconds
+	);
+
+	void WakeByAddressSingle(
+		PVOID Address
+	);
+
+	void WakeByAddressAll(
+		PVOID Address
+	);
+}
+
+struct Win32Waiter {
 	Atomic!uint wakeupCount;
 
 	bool block( /* TODO: timeout */ ) shared {
@@ -21,16 +40,10 @@ struct FutexWaiter {
 
 			assert(c == 0, "Failed to consume wake up!");
 
-			auto err = futex_wait(&wakeupCount, 0);
-			switch (err) {
-				case 0, -EINTR, -EWOULDBLOCK:
-					continue;
-
-				case -ETIMEDOUT:
-					return false;
-
-				default:
-					assert(0, "futex operation failed!");
+			auto err = WaitOnAddress(cast(void*)&wakeupCount, &c, c.sizeof, INFINITE);
+			if (!err) {
+				// TODO: if timeout ever gets implemented, check here.
+				assert(0, "WaitOnAddress operation failed!");
 			}
 		}
 	}
@@ -43,17 +56,16 @@ struct FutexWaiter {
 	}
 
 	void poke() shared {
-		auto err = futex_wake_one(&wakeupCount);
-		assert(err == 0, "futex operation failed!");
+		WakeByAddressSingle(cast(void*)&wakeupCount);
 	}
 }
 
-@"futex wait" unittest {
+@"win32 wait" unittest {
 	import symgc.test;
 	import d.sync.atomic;
 	shared Atomic!uint state;
 	shared Atomic!uint count;
-	shared FutexWaiter waiter;
+	shared Win32Waiter waiter;
 	void *run() {
 		while(true)
 		{

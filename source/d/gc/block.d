@@ -298,6 +298,12 @@ public:
 		auto alreadyDirty = dirtyPages.countBits(index, pages);
 		dirtyPages.setRange(index, pages);
 
+		// For systems which do not have overcommit, we must commit the allocation before use.
+		if (address !is null && alreadyDirty < pages) {
+			import d.gc.memmap;
+			pages_commit(address + index * PageSize, pages * PageSize);
+		}
+
 		dirtyCount -= alreadyDirty;
 		dirtyCount += pages;
 

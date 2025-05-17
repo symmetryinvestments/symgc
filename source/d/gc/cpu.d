@@ -13,13 +13,21 @@ private:
 shared uint gCoreCount;
 
 auto computeCoreCount() {
-	import core.sys.linux.sched;
-	cpu_set_t set;
-	sched_getaffinity(0, cpu_set_t.sizeof, &set);
-	return CPU_COUNT(&set);
+	version(linux) {
+		import core.sys.linux.sched;
+		cpu_set_t set;
+		sched_getaffinity(0, cpu_set_t.sizeof, &set);
+		return CPU_COUNT(&set);
+	}
+	else version(Windows) {
+		import core.cpuid;
+		return threadsPerCPU();
+	}
 }
 
 @"getCoreCount" unittest {
-	import core.sys.linux.sys.sysinfo;
-	assert(getCoreCount() == get_nprocs());
+	version(linux) {
+		import core.sys.linux.sys.sysinfo;
+		assert(getCoreCount() == get_nprocs());
+	}
 }

@@ -79,45 +79,12 @@ public:
 	bool onSuspendSignal() {
 		auto s = state.load();
 
-		version(Symgc_pthread_hook) { }
-		else {
-			import core.thread;
-			auto myThread = Thread.getThis();
-			assert(myThread !is null);
-			if (myThread.tlsGCData is null) {
-				// need to store the tlsGCData, but also need to jump to the
-				// signalled state, as this is what the main thread would have
-				// done if it had access to our threadcache. This only happens
-				// on the first suspend in the thread.
-				assert(status(s) == SuspendState.None);
-				while (true) {
-					auto n = s + SuspendState.Signaled;
-					assert(status(n) == SuspendState.Signaled);
-
-					if (state.casWeak(s, n)) {
-						break;
-					}
-				}
-
-				// now, store the pointer to the threadcache inside mythread.
-				// After this point, GC cycles can directly access the
-				// threadcache.
-				import d.gc.tcache;
-				myThread.tlsGCData = &threadCache;
-
-				s = state.load();
-			}
-		}
-
 		while (true) {
 			assert(status(s) == SuspendState.Signaled);
 
 			// If the thread isn't busy, we can suspend
-			// from the signal handler.
+			// immediately.
 			if (s == SignaledState) {
-				import d.gc.signal;
-				suspendThreadFromSignal(&this);
-
 				return true;
 			}
 
@@ -180,8 +147,15 @@ private:
 			assert(status(s) != SuspendState.Suspended);
 
 			if (s == MustSuspendState) {
-				import d.gc.signal;
-				suspendThreadDelayed(&this);
+				version(linux) {
+					import d.gc.signal;
+					suspendThreadDelayed(&this);
+				} else version(Windows) {
+					// need to update our state to suspended, and then wait
+					// for the GC thread to unpause us.
+					import d.gc.thread;
+					suspendThreadDelayedNoSignals(&this);
+				}
 
 				return true;
 			}
@@ -231,20 +205,10 @@ private:
 	checkForState(SuspendState.Signaled);
 }
 
-version(unittest)
-private auto runThread(void* delegate() dg) {
-	extern(C) void* function(void*) fptr;
-	fptr = cast(typeof(fptr))dg.funcptr;
-	import core.sys.posix.pthread;
-	pthread_t tid;
-	auto r = pthread_create(&tid, null, fptr, dg.ptr);
-	assert(r == 0, "Failed to create thread!");
-
-	return tid;
-}
-
 @"suspend" unittest {
+	version(Posix) {
 	import d.gc.signal;
+	import symgc.test;
 	setupSignals();
 
 	// Make sure to use the state from the thread cache
@@ -333,8 +297,7 @@ private auto runThread(void* delegate() dg) {
 	scope(exit) {
 		setMustStop();
 
-		void* ret;
-		pthread_join(autoResumeThreadID, &ret);
+		joinThread(autoResumeThreadID);
 	}
 
 	void check(SuspendState ss, bool busy, uint suspendCount) {
@@ -371,4 +334,5 @@ private auto runThread(void* delegate() dg) {
 	assert(s.exitBusyState());
 	check(SuspendState.None, false, 2);
 	moveToNextStep();
+	}
 }

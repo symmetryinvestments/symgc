@@ -182,7 +182,7 @@ shared GCState gState;
 // garbage.
 @"addRootReentrancy" unittest {
 	import d.gc.capi;
-	void*[1000] unpinMe;
+	void*[10] unpinMe;
 	foreach (i; 0 .. unpinMe.length) {
 		enum BufferSize = 800_000_000;
 

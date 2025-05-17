@@ -2,7 +2,11 @@ module d.sync.mutex;
 
 import d.sync.waiter;
 
-import core.sys.posix.sched;
+version(linux) {
+	import core.sys.posix.sched;
+} else version(Windows) {
+	import core.sys.windows.winbase: sched_yield = SwitchToThread;
+}
 import symgc.intrinsics : likely;
 
 struct Mutex {
@@ -557,19 +561,8 @@ private:
 	}
 }
 
-version(unittest)
-private auto runThread(void* delegate() dg) {
-	extern(C) void* function(void*) fptr;
-	fptr = cast(typeof(fptr))dg.funcptr;
-	import core.sys.posix.pthread;
-	pthread_t tid;
-	auto r = pthread_create(&tid, null, fptr, dg.ptr);
-	assert(r == 0, "Failed to create thread!");
-
-	return tid;
-}
-
 @"locking" unittest {
+	import symgc.test;
 	import core.stdc.stdio;
 	import d.sync.atomic;
 	shared Mutex mutex;
@@ -608,11 +601,8 @@ private auto runThread(void* delegate() dg) {
 	auto t1 = runThread(&run1);
 	auto t2 = runThread(&run2);
 
-	void* ret;
-
-	import core.sys.posix.pthread;
-	pthread_join(t1, &ret);
-	pthread_join(t2, &ret);
+	joinThread(t1);
+	joinThread(t2);
 
 	assert(mutex.word.load() == 0x00, "Invalid mutext state!");
 
@@ -631,13 +621,13 @@ private auto runThread(void* delegate() dg) {
 		return null;
 	}
 
-	pthread_t[1024] ts;
+	ThreadHandle[1024] ts;
 	foreach (i; 0 .. ts.length) {
 		ts[i] = runThread(&hammer);
 	}
 
 	foreach (i; 0 .. ts.length) {
-		pthread_join(ts[i], &ret);
+		joinThread(ts[i]);
 	}
 
 	assert(mutex.word.load() == 0x00, "Invalid mutext state!");
@@ -645,6 +635,7 @@ private auto runThread(void* delegate() dg) {
 }
 
 @"fairness" unittest {
+	import symgc.test;
 	enum ThreadCount = 8;
 
 	import d.sync.atomic;
@@ -671,15 +662,13 @@ private auto runThread(void* delegate() dg) {
 	keepGoing.store(true);
 	mutex.lock();
 
-	import core.sys.posix.pthread;
-	pthread_t[ThreadCount] ts;
+	ThreadHandle[ThreadCount] ts;
 	foreach (i; 0 .. ThreadCount) {
 		ts[i] = run(i);
 	}
 
 	mutex.unlock();
 
-	import core.sys.posix.unistd;
 	sleep(1);
 	keepGoing.store(false);
 
@@ -687,13 +676,13 @@ private auto runThread(void* delegate() dg) {
 	printf("Fairness results:\n");
 
 	foreach (i; 0 .. ThreadCount) {
-		void* ret;
-		pthread_join(ts[i], &ret);
+		joinThread(ts[i]);
 		printf("\t%4d => %16u\n", i, counts[i]);
 	}
 }
 
 @"condition" unittest {
+	import symgc.test;
 	enum ThreadCount = 1024;
 
 	shared Mutex mutex;
@@ -728,8 +717,7 @@ private auto runThread(void* delegate() dg) {
 	// Start the threads.
 	mutex.lock();
 
-	import core.sys.posix.pthread;
-	pthread_t[ThreadCount] ts;
+	ThreadHandle[ThreadCount] ts;
 	foreach (i; 0 .. ThreadCount) {
 		ts[i] = run(i);
 	}
@@ -753,8 +741,7 @@ private auto runThread(void* delegate() dg) {
 
 	// Now join them all and check next.
 	foreach (i; 0 .. ThreadCount) {
-		void* ret;
-		pthread_join(ts[i], &ret);
+		joinThread(ts[i]);
 	}
 
 	mutex.lock();

@@ -6,7 +6,80 @@ import d.gc.size;
 import d.gc.spec;
 import d.gc.util;
 
+
+struct BinInfo {
+	ushort slotSize;
+	ushort nslots;
+	ubyte npages;
+	ubyte shift;
+	ushort mul;
+
+	this(ushort slotSize, ubyte shift, ubyte npages, ushort nslots) {
+		this.slotSize = slotSize;
+		this.nslots = nslots;
+		this.npages = npages;
+		this.shift = (shift + 17) & 0xff;
+
+		// XXX: out contract
+		enum MaxShiftMask = (8 * size_t.sizeof) - 1;
+		assert(this.shift == (this.shift & MaxShiftMask));
+
+		/**
+		 * This is a bunch of magic values used to avoid requiring
+		 * division to find the index of an item within a run.
+		 *
+		 * Computed using finddivisor.d
+		 */
+		ushort[4] mulIndices = [32768, 26215, 21846, 18725];
+		auto tag = (slotSize >> shift) & 0x03;
+		this.mul = mulIndices[tag];
+	}
+
+	uint computeIndex(size_t offset) const {
+		// FIXME: in contract.
+		assert(offset < npages * PageSize, "Offset out of bounds!");
+
+		return cast(uint) ((offset * mul) >> shift);
+	}
+
+	@property
+	bool dense() const {
+		// We use the number of items as a proxy to estimate the density
+		// of the span. Dense spans are assumed to be long lived.
+		return nslots > 16;
+	}
+
+	@property
+	bool sparse() const {
+		return !dense;
+	}
+
+	@property
+	bool supportsMetadata() const {
+		return nslots <= 256;
+	}
+
+	@property
+	bool supportsInlineMarking() const {
+		return nslots <= 128;
+	}
+}
+
+import d.gc.sizeclass;
+immutable BinInfo[BinCount] binInfos = getBinInfos();
+
+@"binInfos" unittest {
+	foreach (uint sc, bin; binInfos) {
+		assert(bin.supportsMetadata == sizeClassSupportsMetadata(sc));
+		assert(bin.supportsInlineMarking == sizeClassSupportsInlineMarking(sc));
+		assert(bin.dense == isDenseSizeClass(sc));
+		assert(bin.sparse == isSparseSizeClass(sc));
+	}
+}
+
 enum InvalidBinID = 0xff;
+
+
 
 struct SlabEntry {
 private:
@@ -148,7 +221,7 @@ public:
 }
 
 static assert(SlotMetadata.sizeof == size_t.sizeof,
-              "SlotMetadata must fit in size_t!");
+			  "SlotMetadata must fit in size_t!");
 
 struct SlabAllocInfo {
 private:
@@ -308,7 +381,7 @@ private:
 
 	auto slot = base.allocSlot();
 	auto e = Extent.fromSlot(0, slot);
-	auto block = base.reserveAddressSpace(BlockSize);
+	auto block = base.reserveAndCommitAddressSpace(BlockSize);
 	assert(block !is null);
 
 	SlabAllocInfo simulateSmallAlloc(size_t size, uint slotIndex) {
@@ -420,7 +493,7 @@ private:
  * For big endian support, we likely have to change the end where the bits go.
  */
 static assert(MaxSmallSize < 0x4000,
-              "Max small alloc size doesn't fit in 14 bits!");
+			  "Max small alloc size doesn't fit in 14 bits!");
 
 enum FinalizerBit = 1 << 14;
 enum SingleByteBit = 1 << 15;
@@ -495,72 +568,4 @@ void writePackedFreeSpaceImpl(bool PreserveFinalizer)(ushort* ptr, size_t x) {
 	}
 }
 
-struct BinInfo {
-	ushort slotSize;
-	ushort nslots;
-	ubyte npages;
-	ubyte shift;
-	ushort mul;
 
-	this(ushort slotSize, ubyte shift, ubyte npages, ushort nslots) {
-		this.slotSize = slotSize;
-		this.nslots = nslots;
-		this.npages = npages;
-		this.shift = (shift + 17) & 0xff;
-
-		// XXX: out contract
-		enum MaxShiftMask = (8 * size_t.sizeof) - 1;
-		assert(this.shift == (this.shift & MaxShiftMask));
-
-		/**
-		 * This is a bunch of magic values used to avoid requiring
-		 * division to find the index of an item within a run.
-		 *
-		 * Computed using finddivisor.d
-		 */
-		ushort[4] mulIndices = [32768, 26215, 21846, 18725];
-		auto tag = (slotSize >> shift) & 0x03;
-		this.mul = mulIndices[tag];
-	}
-
-	uint computeIndex(size_t offset) const {
-		// FIXME: in contract.
-		assert(offset < npages * PageSize, "Offset out of bounds!");
-
-		return cast(uint) ((offset * mul) >> shift);
-	}
-
-	@property
-	bool dense() const {
-		// We use the number of items as a proxy to estimate the density
-		// of the span. Dense spans are assumed to be long lived.
-		return nslots > 16;
-	}
-
-	@property
-	bool sparse() const {
-		return !dense;
-	}
-
-	@property
-	bool supportsMetadata() const {
-		return nslots <= 256;
-	}
-
-	@property
-	bool supportsInlineMarking() const {
-		return nslots <= 128;
-	}
-}
-
-import d.gc.sizeclass;
-immutable BinInfo[BinCount] binInfos = getBinInfos();
-
-@"binInfos" unittest {
-	foreach (uint sc, bin; binInfos) {
-		assert(bin.supportsMetadata == sizeClassSupportsMetadata(sc));
-		assert(bin.supportsInlineMarking == sizeClassSupportsInlineMarking(sc));
-		assert(bin.dense == isDenseSizeClass(sc));
-		assert(bin.sparse == isSparseSizeClass(sc));
-	}
-}
