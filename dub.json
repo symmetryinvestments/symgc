@@ -7,6 +7,9 @@
 	"description": "SDC Garbage collector, ported to dmd",
 	"license": "MIT",
 	"name": "symgc",
+	"libs-windows" : [
+		"synchronization"
+	],
 	"configurations" : {
 		"standard" : {
 			"targetType": "library",
