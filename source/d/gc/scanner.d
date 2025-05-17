@@ -73,8 +73,7 @@ public:
 
 		// Scan the roots.
 		// TODO: this cast is awful, see if we can fix this.
-		void delegate(const(void*)[]) shared atwl = &addToWorkList;
-		__sd_gc_global_scan(cast(void delegate(const(void*)[]))atwl);
+		__sd_gc_global_scan(cast(void delegate(const(void*)[]))&processGlobal);
 
 		// Now send this thread marking!
 		runMark();
@@ -97,6 +96,10 @@ public:
 
 	void addToWorkList(WorkItem item) shared {
 		addToWorkList((&item)[0 .. 1]);
+	}
+
+	void processGlobal(const(void*)[] range) shared {
+		addToWorkList(range);
 	}
 
 	void addToWorkList(const(void*)[] range) shared {

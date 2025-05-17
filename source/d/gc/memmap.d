@@ -92,7 +92,12 @@ void* pages_map(void* addr, size_t size, size_t alignment) {
 
 void pages_commit(void* addr, size_t size) {
 	version(Windows) {
-		VirtualAlloc(addr, size, MEM_COMMIT, PAGE_READWRITE);
+		if (size == 0) {
+			return;
+		}
+		auto ret = VirtualAlloc(addr, size, MEM_COMMIT, PAGE_READWRITE);
+		assert(ret !is null, "Could not commit memory!");
+		assert(ret is addr, "MEM_COMMIT moved alloction!");
 	}
 	// linux does not need explicit commit
 }

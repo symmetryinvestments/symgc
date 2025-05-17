@@ -339,6 +339,10 @@ private:
 
 		auto leadSize = extraBlocks * BlockSize;
 		auto ptr = block.address - leadSize;
+		// need to commit all pages that aren't in the last page.
+		import d.gc.memmap;
+		pages_commit(ptr, leadSize);
+
 		return e.at(ptr, npages, block);
 	}
 

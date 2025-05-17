@@ -42,7 +42,7 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 		Thread t;
 		Thread tn;
 		Thread self;
-		bool empty() => t !is null;
+		bool empty() => t is null;
 		Thread front() => t;
 		void popFront()
 		{

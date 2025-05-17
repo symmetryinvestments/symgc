@@ -381,7 +381,7 @@ private:
 
 	auto slot = base.allocSlot();
 	auto e = Extent.fromSlot(0, slot);
-	auto block = base.reserveAddressSpace(BlockSize);
+	auto block = base.reserveAndCommitAddressSpace(BlockSize);
 	assert(block !is null);
 
 	SlabAllocInfo simulateSmallAlloc(size_t size, uint slotIndex) {
