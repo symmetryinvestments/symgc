@@ -314,6 +314,8 @@ private:
 	check(SuspendState.Signaled, false, 0);
 
 	assert(s.onSuspendSignal());
+	suspendThreadFromSignal(s);
+
 	check(SuspendState.None, false, 1);
 	moveToNextStep();
 

@@ -1,5 +1,7 @@
 /* Extra defs for windows */
 module core.sys.windows.winntex;
+
+version(Windows):
 import core.sys.windows.windef;
 
 struct PROCESSOR_NUMBER {
