@@ -33,7 +33,7 @@ public:
 		mutex.lock();
 		scope(exit) mutex.unlock();
 
-		(cast(SharedLock*) &this).exclusiveUnlockImpl();
+		(cast(SharedLock*) &this).sharedUnlockImpl();
 	}
 
 	/**
@@ -51,7 +51,7 @@ public:
 		assert(mutex.isHeld());
 		scope(exit) mutex.unlock();
 
-		(cast(SharedLock*) &this).unlockWriteImpl();
+		(cast(SharedLock*) &this).exclusiveUnlockImpl();
 	}
 
 private:
@@ -77,13 +77,13 @@ private:
 		mutex.waitFor(&hasExclusiveLock);
 	}
 
-	void exclusiveUnlockImpl() {
+	void sharedUnlockImpl() {
 		assert(mutex.isHeld());
 		assert((count & ~Exclusive) > 0);
 		--count;
 	}
 
-	void unlockWriteImpl() {
+	void exclusiveUnlockImpl() {
 		assert(mutex.isHeld());
 		assert(count == Exclusive);
 		count = 0;

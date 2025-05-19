@@ -18,6 +18,7 @@ else version(Windows) {
 	void usleep(ulong usecs) {
 		Sleep(cast(uint)(usecs / 1000));
 	}
+	private extern (C) ThreadHandle _beginthreadex(void*, uint, LPTHREAD_START_ROUTINE, void*, uint, uint*) nothrow @nogc;
 }
 
 ThreadHandle runThread(void* delegate() dg) {
@@ -34,7 +35,7 @@ ThreadHandle runThread(void* delegate() dg) {
 		LPTHREAD_START_ROUTINE fptr;
 		fptr = cast(typeof(fptr)) dg.funcptr;
 
-		tid = CreateThread(null, 0, fptr, dg.ptr, 0, null);
+		tid = _beginthreadex(null, 0, fptr, dg.ptr, 0, null);
 
 		assert(tid != INVALID_HANDLE_VALUE, "Failed to create thread!");
 	}
@@ -59,7 +60,7 @@ void* joinThread(ThreadHandle tid) {
 	}
 }
 
-version(Windows) {
+version(Symgc_test_main) {
 	void main() {
 	}
 }

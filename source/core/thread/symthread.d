@@ -128,6 +128,7 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 				++suspended;
 			}
 		}
+		else static assert(false);
 	}
 
 	version(Windows) if (retry) {
@@ -203,13 +204,24 @@ bool resumeDruntimeThreads(ref uint suspended) {
 
 		auto ss = tc.suspendState;
 
-		suspended += ss == SuspendState.Suspended;
-		retry |= ss != SuspendState.None;
+		version(Posix) {
+			suspended += ss == SuspendState.Suspended;
+			retry |= ss != SuspendState.None;
 
-		if (ss != SuspendState.Suspended)
-			continue;
+			if (ss != SuspendState.Suspended)
+				continue;
 
-		tc.sendResumeSignal();
+			tc.sendResumeSignal();
+		} else version(Windows) {
+			// Since there is no signal processing on the target thread, we need to
+			// do the step that sets the state properly from here.
+			if (ss != SuspendState.Suspended)
+				continue;
+
+			tc.sendResumeSignal();
+			tc.onResumeSignal();
+		}
+		else static assert(false);
 		core_thread_osthread_resume(t);
 	}
 

@@ -113,6 +113,8 @@ public:
 
 	auto sendResumeSignal() => state.sendResumeSignal();
 
+	auto onResumeSignal() => state.onResumeSignal();
+
 	auto onSuspendSignal() => state.onSuspendSignal();
 
 	auto markSuspended() => state.markSuspended();

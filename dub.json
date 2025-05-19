@@ -39,7 +39,8 @@
 		"windowsdebug" : {
 			"targetType" : "executable",
 			"versions" : [
-				"Symgc_druntime_hooks"
+				"Symgc_druntime_hooks",
+				"Symgc_test_main"
 			]
 		}
 	},

@@ -108,6 +108,16 @@ void waitForDelayedThreads() {
 	gThreadState.waitForDelayedThreads();
 }
 
+version(Symgc_testing) {
+	void simulateStopTheWorld() {
+		gThreadState.stopTheWorldLock.exclusiveLock();
+	}
+
+	void simulateResumeTheWorld() {
+		gThreadState.stopTheWorldLock.exclusiveUnlock();
+	}
+}
+
 void threadScan(ScanDg scan) {
 	// Scan the registered TLS segments.
 	foreach (s; threadCache.tlsSegments) {
@@ -253,7 +263,7 @@ public:
 		// finally, lock the stop-the-world mutex, and resume operations. We will
 		// not proceed until the STW mutex is unlocked.
 		stopTheWorldLock.sharedLock();
-		tstate.onResumeSignal();
+		assert(tstate.suspendState() == SuspendState.None);
 		stopTheWorldLock.sharedUnlock();
 	}
 
