@@ -29,6 +29,13 @@ struct Link {
 	}
 }
 
+Link* allocLink(Link* next)
+{
+	auto newLink = cast(Link*)__sd_gc_alloc(Link.sizeof);
+	newLink.next = next;
+	return newLink;
+}
+
 void main() {
 	import d.gc.thread;
 	createProcess();
@@ -39,9 +46,9 @@ void main() {
 	enum NodeCount = 10000000;
 
 	foreach (loop; 0 .. 20) {
-		auto ll = new Link(null);
+		auto ll = allocLink(null);
 		foreach (i; 0 .. NodeCount) {
-			ll = new Link(ll);
+			ll = allocLink(ll);
 		}
 
 		__sd_gc_collect();
