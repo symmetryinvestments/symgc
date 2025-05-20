@@ -8,7 +8,9 @@ import d.gc.types;
 void createProcess() {
 	import d.gc.base;
 	import d.gc.arena;
+	import d.gc.emap;
 	Arena.initializeArenaStorage(gBase);
+	gExtentMap.initialize(gBase);
 
 	enterBusyState();
 	scope(exit) exitBusyState();
