@@ -5,6 +5,7 @@ import std.string;
 import std.conv;
 import std.array;
 import std.range;
+import std.system;
 
 struct TestHarness
 {
@@ -13,6 +14,7 @@ struct TestHarness
 	string output;
 	int expectedRetval;
 	int retval;
+	OS[] platforms;
 }
 
 TestHarness parseTest(string filename)
@@ -33,6 +35,9 @@ TestHarness parseTest(string filename)
 					break;
 				case "desc":
 					harness.description = line[colon + 1 .. $].strip;
+					break;
+				case "platform":
+					harness.platforms = line[colon + 1 .. $].splitter(",").map!(s => s.strip.to!OS).array;
 					break;
 				default:
 					break;
@@ -75,6 +80,11 @@ bool runTest(ref TestHarness th, bool verbose, bool force)
 
 int main(string[] args)
 {
+	version(Windows)
+		enum myPlatform = "windows";
+	else version(linux)
+		enum myPlatform = "linux";
+	else static assert("Platform not supported yet!");
 	import std.getopt;
 	bool verbose = false;
 	bool info = false;
@@ -99,7 +109,13 @@ int main(string[] args)
 	if(info) {
 		// instead of running tests, just list all the tests and the information about them.
 		foreach(th; tests)
-			writeln(i"$(th.filename) - $(th.description)");
+		{
+			write(i"$(th.filename) - $(th.description)");
+			if (th.platforms.length) {
+				writef(" [platform(s): %-(%s, %)]", th.platforms);
+			}
+			writeln();
+		}
 		return 0;
 	}
 
@@ -108,14 +124,18 @@ int main(string[] args)
 	int nrun = 0;
 	foreach(ref th; tests)
 	{
-		bool doRun = targets.length == 0;
-		foreach(t; targets) {
-			if(th.filename.startsWith(t)) {
-				doRun = true;
-			}
+		bool doRun = true;
+		if(targets.length > 0 && !targets.canFind!((t, needle) => needle.filename.startsWith(t))(th)) {
+			if(verbose) writeln("skipping unselected test ", th.filename);
+			doRun = false;
+		}
+
+		if(doRun && th.platforms.length > 0 && !th.platforms.canFind(os)) {
+			if(verbose) writeln("skipping unmatching platform test ", th.filename);
+			doRun = false;
 		}
 		if(!doRun) {
-			if(verbose) writeln("skipping unselected test ", th.filename);
+			writeln(i"TEST $(th.filename) ...SKIPPED");
 			continue;
 		}
 		++nrun;

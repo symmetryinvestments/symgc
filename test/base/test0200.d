@@ -17,7 +17,8 @@
 //T retval:0
 //T desc:GC multithreaded stress test.
 
-import core.sys.posix.pthread;
+// in windows, we must use the SDC GC because we are using druntime's mechanisms.
+version(Windows) extern(C) __gshared rt_options = ["gcopt=gc:sdc"];
 
 extern(C) void __sd_gc_collect();
 extern(C) void* __sd_gc_alloc(size_t size);
@@ -30,7 +31,8 @@ void randomAlloc() {
 
 	enum CollectCycle = 4 * 1024 * 1024;
 	size_t n = 11400714819323198485;
-	n ^= cast(size_t) pthread_self();
+	import symgc.thread;
+	n ^= cast(size_t) currentThreadHandle();
 
 	foreach (_; 0 .. 8) {
 		foreach (i; 0 .. CollectCycle) {
@@ -47,25 +49,21 @@ void randomAlloc() {
 	}
 }
 
-extern(C) void* runThread(void*) {
-	randomAlloc();
-	return null;
-}
-
 void main() {
 	import d.gc.thread;
 	createProcess();
 	enum ThreadCount = 4;
-	pthread_t[ThreadCount - 1] tids;
+	import core.thread;
+	Thread[ThreadCount - 1] tids;
 
 	foreach (ref tid; tids) {
-		pthread_create(&tid, null, &runThread, null);
+		tid = new Thread({randomAlloc();});
+		tid.start();
 	}
 
 	randomAlloc();
 
 	foreach (ref tid; tids) {
-		void* ret;
-		pthread_join(tid, &ret);
+		tid.join();
 	}
 }

@@ -23,54 +23,54 @@ private Thread toThread(return scope ThreadBase t) @trusted nothrow @nogc pure
 	return cast(Thread) cast(void*) t;
 }
 
+struct ThreadIterator
+{
+	this(Thread start)
+	{
+		self = Thread.getThis;
+		tn = start;
+		popFront();
+	}
+
+	Thread t;
+	Thread tn;
+	Thread self;
+	bool empty() => t is null;
+	Thread front() => t;
+	void popFront()
+	{
+		t = tn;
+		while (t !is null) {
+
+			if(t is self)
+			{
+				t = t.next.toThread;
+				continue;
+			}
+
+			if (!t.isRunning())
+			{
+				auto nextThread = t.next.toThread;
+				Thread.remove(t);
+				t = nextThread;
+				continue;
+			}
+
+			this.tn = t.next.toThread;
+			return;
+		}
+
+		// here if t is now null.
+		this.tn = null;
+	}
+}
+
 bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 	import d.gc.tcache;
 	import d.gc.tstate;
 
 	suspended = 0;
 	bool retry = false;
-
-	static struct ThreadIterator
-	{
-		this(Thread start)
-		{
-			self = Thread.getThis;
-			tn = start;
-			popFront();
-		}
-
-		Thread t;
-		Thread tn;
-		Thread self;
-		bool empty() => t is null;
-		Thread front() => t;
-		void popFront()
-		{
-			t = tn;
-			while (t !is null) {
-
-				if(t is self)
-				{
-					t = t.next.toThread;
-					continue;
-				}
-
-				if (!t.isRunning())
-				{
-					auto tn = t.next.toThread;
-					Thread.remove(t);
-					t = tn;
-					continue;
-				}
-
-				this.tn = t.next.toThread;
-				return;
-			}
-
-			// here if t is now null.
-			this.tn = null;
-		}
-	}
 
 	foreach(t; ThreadIterator(ThreadBase.sm_tbeg.toThread))
 	{
@@ -117,15 +117,18 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 			tc.sendSuspendSignal();
 
 			if (core_thread_osthread_suspend(t)) {
-				if (!tc.onSuspendSignal()) {
-					import d.gc.thread : delayedThreadInc;
-					delayedThreadInc();
-					// delayed, resume the thread, and increment the delayed thread count.
-					core_thread_osthread_resume(t);
-					retry = true;
+				if (tc.onSuspendSignal()) {
+					tc.markSuspended();
+					++suspended;
 					continue;
 				}
-				++suspended;
+
+				// Could not suspend, handle a delayed suspend
+				import d.gc.thread : delayedThreadInc;
+				delayedThreadInc();
+				// delayed, resume the thread, and increment the delayed thread count.
+				core_thread_osthread_resume(t);
+				retry = true;
 			}
 		}
 		else static assert(false);
@@ -180,23 +183,14 @@ void scanWorldPausedData(ScanDg scan) {
 bool resumeDruntimeThreads(ref uint suspended) {
 	import d.gc.tcache;
 	import d.gc.tstate;
-	Thread t = ThreadBase.sm_tbeg.toThread;
 
 	suspended = 0;
 	bool retry = false;
 
-	while (t)
+	foreach(t; ThreadIterator(ThreadBase.sm_tbeg.toThread))
 	{
-		auto tn = t.next.toThread;
-		scope(exit) t = tn;
-		if (!t.isRunning)
-		{
-			Thread.remove(t);
-			continue;
-		}
-
 		auto tc = cast(ThreadCache*) t.tlsGCData();
-		// determine if this thread is suspended or should be suspended.
+
 		if (tc is null) {
 			// if the threadcache is null, this means we didn't suspend it. skip it.
 			continue;

@@ -11,6 +11,7 @@ version(linux) {
 }
 else version(Windows) {
 	import core.sys.windows.winbase;
+	import symgc.thread : _beginthreadex;
 	void sleep(int seconds) {
 		Sleep(1000 * seconds);
 	}
@@ -18,7 +19,6 @@ else version(Windows) {
 	void usleep(ulong usecs) {
 		Sleep(cast(uint)(usecs / 1000));
 	}
-	private extern (C) ThreadHandle _beginthreadex(void*, uint, LPTHREAD_START_ROUTINE, void*, uint, uint*) nothrow @nogc;
 }
 
 ThreadHandle runThread(void* delegate() dg) {

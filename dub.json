@@ -32,8 +32,11 @@
 		},
 		"integration" : {
 			"targetType": "library",
-			"versions" : [
+			"versions-linux" : [
 				"Symgc_pthread_hook"
+			],
+			"versions-windows" : [
+				"Symgc_druntime_hooks"
 			]
 		},
 		"windowsdebug" : {

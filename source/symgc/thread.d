@@ -8,6 +8,7 @@ version(Windows) {
 	alias sched_yield = SwitchToThread;
 	alias ThreadHandle = HANDLE;
 	private enum THREAD_RETURN_VALUE = DWORD(0);
+	extern (C) ThreadHandle _beginthreadex(void*, uint, LPTHREAD_START_ROUTINE, void*, uint, uint*) nothrow @nogc;
 } else version(linux) {
 	import core.sys.posix.pthread : pthread_t, pthread_self;
 	alias ThreadHandle = pthread_t;
@@ -39,7 +40,7 @@ bool createGCThread(TSR)(ThreadHandle* thread, TSR start_routine, void* arg) {
 		return ret == 0;
 	} else version(Windows) {
 		import core.sys.windows.winbase : LPTHREAD_START_ROUTINE, CreateThread, INVALID_HANDLE_VALUE;
-		*thread = CreateThread(null, 0, cast(LPTHREAD_START_ROUTINE) runner.getFunction!false(), runner, 0, null);
+		*thread = _beginthreadex(null, 0, cast(LPTHREAD_START_ROUTINE) runner.getFunction!false(), runner, 0, null);
 		return *thread != INVALID_HANDLE_VALUE;
 	}
 }

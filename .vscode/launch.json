@@ -21,6 +21,13 @@
             "name": "Debug D project",
             "cwd": "${workspaceFolder}",
             "program": "./symgc.exe"
+        },
+        {
+            "type": "code-d",
+            "request": "launch",
+            "name": "Debug D project test200",
+            "cwd": "${workspaceFolder}",
+            "program": "./test/base/bin/test0200.exe"
         }
     ]
 }

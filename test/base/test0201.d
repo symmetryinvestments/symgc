@@ -16,6 +16,7 @@
 //T has-passed:yes
 //T retval:0
 //T desc:GC unsuspendable thread test.
+//T platform:linux
 
 import d.sync.mutex;
 shared Mutex m1, m2;
