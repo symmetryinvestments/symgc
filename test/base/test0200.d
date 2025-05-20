@@ -49,7 +49,11 @@ void randomAlloc() {
 	}
 }
 
+extern(C) void pthread_create();
+
 void main() {
+	// this is needed to engage the pthread hook...
+	version(linux) auto pth = &pthread_create;
 	import d.gc.thread;
 	createProcess();
 	enum ThreadCount = 4;
