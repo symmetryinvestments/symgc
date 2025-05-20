@@ -96,8 +96,13 @@ void restartTheWorld() {
 	gThreadState.restartTheWorld();
 }
 
-void suspendThreadDelayedNoSignals(d.gc.tstate.ThreadState* tstate) {
-	gThreadState.suspendThreadDelayedNoSignals(tstate);
+void suspendThreadDelayed(d.gc.tstate.ThreadState* tstate) {
+	version(linux) {
+		import d.gc.signal : suspendThreadDelayedWithSignals;
+		suspendThreadDelayedWithSignals(tstate);
+	} else version(Windows) {
+		gThreadState.suspendThreadDelayedNoSignals(tstate);
+	}
 }
 
 void delayedThreadInc() {
@@ -226,9 +231,6 @@ public:
 			import symgc.thread;
 			sched_yield();
 		}
-
-		// now, wait for any delayed threads
-		waitForDelayedThreads();
 	}
 
 	void delayedThreadDec() shared {

@@ -441,7 +441,6 @@ private:
 		}
 	}
 
-	import symgc.thread;
 	ThreadHandle[SharerThreads + 1] tids;
 	tids[0] = runThread(&exclusiveLocker);
 	foreach (i; 1 .. tids.length) {

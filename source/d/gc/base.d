@@ -1,4 +1,5 @@
 module d.gc.base;
+
 import d.gc.spec;
 import d.gc.util;
 

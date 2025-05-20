@@ -74,7 +74,7 @@ void suspendThreadFromSignal(ThreadState* ts) {
 	__sd_gc_push_registers(&call);
 }
 
-void suspendThreadDelayed(ThreadState* ts) {
+void suspendThreadDelayedWithSignals(ThreadState* ts) {
 	/**
 	 * First, we make sure that a resume handler cannot be called
 	 * before we suspend.
@@ -164,10 +164,10 @@ extern(C) void __sd_gc_signal_suspend(int sig, siginfo_t* info, void* context) {
 	auto oldErrno = errno;
 	scope(exit) errno = oldErrno;
 
-	// If we are signalled but the thread getThis hasn't yet been associated with our threadCache,
-	// this means we need to perform that step first. This can only happen
 	version(Symgc_pthread_hook) { }
 	else {
+		// Note: this fixup is only necessary in version 2.111 of the
+		// compiler, where we do not have a thread startup hook for the GC.
 		import core.thread;
 		auto myThread = Thread.getThis();
 		assert(myThread !is null);
@@ -185,7 +185,6 @@ extern(C) void __sd_gc_signal_suspend(int sig, siginfo_t* info, void* context) {
 			myThread.tlsGCData = &threadCache;
 		}
 	}
-
 
 	import d.gc.tcache;
 	if (threadCache.state.onSuspendSignal()) {

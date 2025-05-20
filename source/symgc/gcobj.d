@@ -82,11 +82,12 @@ extern(C) void _d_register_sdc_gc()
 	}
 	else
 	{
-		version(linux) {
+		version(Posix) {
 			registerGCFactory("sdc", &initialize);
 			registerGCFactory("sdcq", &initializeQuiet);
 		}
-		else static assert(false, "No support for threadInit in gcinterface!");
+		else
+			static assert(false, "No support for threadInit in gcinterface!");
 	}
 }
 

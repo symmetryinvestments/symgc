@@ -147,15 +147,8 @@ private:
 			assert(status(s) != SuspendState.Suspended);
 
 			if (s == MustSuspendState) {
-				version(linux) {
-					import d.gc.signal;
-					suspendThreadDelayed(&this);
-				} else version(Windows) {
-					// need to update our state to suspended, and then wait
-					// for the GC thread to unpause us.
-					import d.gc.thread;
-					suspendThreadDelayedNoSignals(&this);
-				}
+				import d.gc.thread;
+				suspendThreadDelayed(&this);
 
 				return true;
 			}

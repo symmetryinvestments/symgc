@@ -149,23 +149,23 @@ public:
 		import core.stdc.stdlib : alloca;
 		auto dallocSlabs = cast(Extent**) alloca(worklist.length * PointerSize);
 
+		// TODO: if we can mark everything nothrow properly, this may be unnecessary.
 		auto doTheRest() nothrow {
-
-		try {
-			uint ndalloc = 0;
-			scope(success) if (ndalloc > 0) {
-				foreach (i; 0 .. ndalloc) {
-					// FIXME: batch free to go through the lock once using freeExtentLocked.
-					filler.freeExtent(emap, dallocSlabs[i]);
+			try {
+				uint ndalloc = 0;
+				scope(success) if (ndalloc > 0) {
+					foreach (i; 0 .. ndalloc) {
+						// FIXME: batch free to go through the lock once using freeExtentLocked.
+						filler.freeExtent(emap, dallocSlabs[i]);
+					}
 				}
-			}
 
-			auto ec = pds[0].extentClass;
-			auto sc = ec.sizeClass;
-			return bins[sc].batchFree(worklist, pds, dallocSlabs, ndalloc);
-		} catch(Exception e) {
-			assert(false, "Exception in GC!");
-		}
+				auto ec = pds[0].extentClass;
+				auto sc = ec.sizeClass;
+				return bins[sc].batchFree(worklist, pds, dallocSlabs, ndalloc);
+			} catch(Exception e) {
+				assert(false, "Exception in GC!");
+			}
 		}
 		return doTheRest();
 	}

@@ -41,7 +41,7 @@ void destroyItem(T)(void* item, size_t size) {
 void allocateItem(size_t S)() {
 	alias T = SlabDestructor!(S);
 	version(Windows) {
-		// using druntime finalizers, we must add 1 to account for the finalizer subtracting one.
+		// using druntime finalizers, we must add 1 to account for the finalizer subtracting 1.
 		auto destructor = cast(void*)typeid(T);
 		enum allocSize = T.sizeof + 1;
 	} else version(linux) {

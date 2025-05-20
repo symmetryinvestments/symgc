@@ -2,11 +2,8 @@ module d.sync.mutex;
 
 import d.sync.waiter;
 
-version(linux) {
-	import core.sys.posix.sched;
-} else version(Windows) {
-	import core.sys.windows.winbase: sched_yield = SwitchToThread;
-}
+import symgc.thread;
+
 import symgc.intrinsics : likely;
 
 struct Mutex {
