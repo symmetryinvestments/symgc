@@ -91,29 +91,6 @@ extern(C) void _d_register_sdc_gc()
 	}
 }
 
-shared static this()
-{
-	register_default_gcs();
-}
-
-extern(C) {
-	// do not import GC modules, they might add a dependency to this whole module
-	void _d_register_conservative_gc();
-	void _d_register_manual_gc();
-
-	// overtakes the function in core.internal.gc.
-	void* register_default_gcs()
-	{
-		pragma(inline, false);
-		// do not call, they register implicitly through pragma(crt_constructor)
-		// avoid being optimized away
-		auto reg1 = &_d_register_conservative_gc;
-		auto reg2 = &_d_register_manual_gc;
-		auto reg3 = &_d_register_sdc_gc;
-		return reg1 < reg2 ? reg1 : reg2 < reg3 ? reg2 : reg3;
-	}
-}
-
 
 // since all the real work is done in the SDC library, the class is just a
 // shim, and can just be initialized at compile time.
