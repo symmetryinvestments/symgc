@@ -40,7 +40,15 @@ void destroyItem(T)(void* item, size_t size) {
 
 void allocateItem(size_t S)() {
 	alias T = SlabDestructor!(S);
-	auto ptr = __sd_gc_alloc_finalizer(T.sizeof, &destroyItem!T);
+	version(Windows) {
+		// using druntime finalizers, we must add 1 to account for the finalizer subtracting 1.
+		auto destructor = cast(void*)typeid(T);
+		enum allocSize = T.sizeof + 1;
+	} else version(linux) {
+		auto destructor = &destroyItem!T;
+		enum allocSize = T.sizeof;
+	}
+	auto ptr = __sd_gc_alloc_finalizer(allocSize, destructor);
 	auto iptr = cast(size_t) ptr;
 
 	auto item = cast(T*) ptr;

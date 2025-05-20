@@ -33,7 +33,7 @@ public:
 		mutex.lock();
 		scope(exit) mutex.unlock();
 
-		(cast(SharedLock*) &this).exclusiveUnlockImpl();
+		(cast(SharedLock*) &this).sharedUnlockImpl();
 	}
 
 	/**
@@ -51,7 +51,7 @@ public:
 		assert(mutex.isHeld());
 		scope(exit) mutex.unlock();
 
-		(cast(SharedLock*) &this).unlockWriteImpl();
+		(cast(SharedLock*) &this).exclusiveUnlockImpl();
 	}
 
 private:
@@ -77,32 +77,21 @@ private:
 		mutex.waitFor(&hasExclusiveLock);
 	}
 
-	void exclusiveUnlockImpl() {
+	void sharedUnlockImpl() {
 		assert(mutex.isHeld());
 		assert((count & ~Exclusive) > 0);
 		--count;
 	}
 
-	void unlockWriteImpl() {
+	void exclusiveUnlockImpl() {
 		assert(mutex.isHeld());
 		assert(count == Exclusive);
 		count = 0;
 	}
 }
 
-version(unittest)
-private auto runThread(void* delegate() dg) {
-	extern(C) void* function(void*) fptr;
-	fptr = cast(typeof(fptr))dg.funcptr;
-	import core.sys.posix.pthread;
-	pthread_t tid;
-	auto r = pthread_create(&tid, null, fptr, dg.ptr);
-	assert(r == 0, "Failed to create thread!");
-
-	return tid;
-}
-
 @"sharedLocks" unittest {
+	import symgc.test;
 	// Simple testing of shared locks, then test multiple threads acquiring
 	// the lock.
 	shared SharedLock lock;
@@ -140,8 +129,7 @@ private auto runThread(void* delegate() dg) {
 		return null;
 	}
 
-	import core.sys.posix.pthread;
-	pthread_t[50] tids;
+	ThreadHandle[50] tids;
 	foreach (i; 0 .. tids.length) {
 		tids[i] = runThread(&run);
 	}
@@ -167,9 +155,8 @@ private auto runThread(void* delegate() dg) {
 		assert(lock.count == 1);
 	}
 
-	void* ret;
 	foreach (i; 0 .. tids.length) {
-		pthread_join(tids[i], &ret);
+		joinThread(tids[i]);
 	}
 
 	lock.sharedUnlock();
@@ -177,6 +164,7 @@ private auto runThread(void* delegate() dg) {
 }
 
 @"exclusiveLock" unittest {
+	import symgc.test;
 	// Test using the exclusive lock. Ensure only one thread can hold the
 	// lock at any given time.
 	shared SharedLock lock;
@@ -250,16 +238,15 @@ private auto runThread(void* delegate() dg) {
 	auto t1 = runThread(&run1);
 	auto t2 = runThread(&run2);
 
-	import core.sys.posix.pthread;
-	void* ret;
-	pthread_join(t1, &ret);
-	pthread_join(t2, &ret);
+	joinThread(t1);
+	joinThread(t2);
 
 	assert(!lock.mutex.isHeld(), "Mutex is held!");
 	assert(lock.count == 0, "Invalid lock state!");
 }
 
 @"exclusiveAndSharedLock" unittest {
+	import symgc.test;
 	/**
 	 * Test the following scenarios:
 	 * 1. When a shared lock is held, exclusively locking waits.
@@ -402,7 +389,6 @@ private auto runThread(void* delegate() dg) {
 			mutex.unlock();
 
 			// Sleep a tiny bit (10ms) to ensure a steady state
-			import core.sys.posix.unistd;
 			usleep(10 * 1000);
 
 			assert(load(_locked) == locked,
@@ -455,8 +441,7 @@ private auto runThread(void* delegate() dg) {
 		}
 	}
 
-	import core.sys.posix.pthread;
-	pthread_t[SharerThreads + 1] tids;
+	ThreadHandle[SharerThreads + 1] tids;
 	tids[0] = runThread(&exclusiveLocker);
 	foreach (i; 1 .. tids.length) {
 		tids[i] = runThread(&sharedLocker);
@@ -527,8 +512,7 @@ private auto runThread(void* delegate() dg) {
 	sharedState.setDesired(uint.max);
 	exclusiveState.store(uint.max);
 	foreach (i; 0 .. tids.length) {
-		void* ret;
-		pthread_join(tids[i], &ret);
+		joinThread(tids[i]);
 	}
 
 	assert(lock.count == 0, "Invalid lock state!");
@@ -536,6 +520,7 @@ private auto runThread(void* delegate() dg) {
 }
 
 @"threadStressTest" unittest {
+	import symgc.test;
 	// Stress the lock by creating many threads that try both exclusive and
 	// shared locking.
 	import d.sync.atomic;
@@ -577,7 +562,6 @@ private auto runThread(void* delegate() dg) {
 			assert(ne == 0);
 			assert(ns >= 0 && ns < MaxShared);
 
-			import core.sys.posix.sched;
 			sched_yield();
 			ns = numSharedLocks.fetchSub(1);
 
@@ -593,9 +577,8 @@ private auto runThread(void* delegate() dg) {
 
 	lock.exclusiveLock(); // To sync all thread starts.
 
-	import core.sys.posix.pthread;
-	pthread_t[MaxExclusive] exclusives;
-	pthread_t[MaxShared] sharers;
+	ThreadHandle[MaxExclusive] exclusives;
+	ThreadHandle[MaxShared] sharers;
 
 	foreach (i; 0 .. exclusives.length) {
 		exclusives[i] = runThread(&runExclusive);
@@ -608,14 +591,12 @@ private auto runThread(void* delegate() dg) {
 	lock.exclusiveUnlock(); // Release all the threads.
 
 	foreach (i; 0 .. exclusives.length) {
-		void* ret;
-		pthread_join(exclusives[i], &ret);
+		joinThread(exclusives[i]);
 	}
 
 	size_t highWater;
 	foreach (i; 0 .. sharers.length) {
-		size_t ret;
-		pthread_join(sharers[i], cast(void**) &ret);
+		size_t ret = cast(size_t) joinThread(sharers[i]);
 		if (ret > highWater) {
 			highWater = ret;
 		}

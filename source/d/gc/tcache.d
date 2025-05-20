@@ -60,11 +60,13 @@ private:
 	import d.gc.tstate;
 	package ThreadState state;
 
-	import core.sys.posix.pthread;
-	package pthread_t self;
+	import symgc.thread;
+	package ThreadHandle self;
 
-	import core.sys.posix.sys.types;
-	package pid_t tid;
+	version(linux) {
+		import core.sys.posix.sys.types;
+		package pid_t tid;
+	}
 
 	RNode rnode;
 
@@ -111,17 +113,23 @@ public:
 
 	auto sendResumeSignal() => state.sendResumeSignal();
 
+	auto onResumeSignal() => state.onResumeSignal();
+
+	auto onSuspendSignal() => state.onSuspendSignal();
+
+	auto markSuspended() => state.markSuspended();
+
 	void initialize(shared(ExtentMap)* emap, shared(Base)* base) {
 		this.emap = CachedExtentMap(emap, base);
 
 		// Make sure initialize can be called multiple
 		// times on the same thread cache.
 		if (isInitialized()) {
-			assert(self == pthread_self(), "Invalid pthread_self!");
+			assert(self == currentThreadHandle(), "Invalid current thread handle!");
 			return;
 		}
 
-		self = pthread_self();
+		self = currentThreadHandle();
 
 		/**
 		 * You'd think linux would provide a way to get the tid from
@@ -129,7 +137,7 @@ public:
 		 */
 		//import core.sys.linux.unistd;
 		// NOTE: not included in druntime so we have to define it locally
-		tid = gettid();
+		version(linux) tid = gettid();
 
 		nextAllocationEvent = DefaultEventWait;
 		nextDeallocationEvent = DefaultEventWait;
@@ -799,8 +807,17 @@ private:
 		 * of glibc thanks to rseqs, but we might want to find
 		 * an alternative on other systems.
 		 */
-		import core.sys.linux.sched;
-		return sched_getcpu();
+		 version(linux) {
+			import core.sys.linux.sched;
+			return sched_getcpu();
+		 }
+		 else version(Windows) {
+			import core.sys.windows.winntex;
+			PROCESSOR_NUMBER pnum;
+			GetCurrentProcessorNumberEx(&pnum);
+			// Each processor group has 64 logical cores. So a 6-bit number with the group id added as the upper bits.
+			return (pnum.Group << 6) + pnum.Number;
+		 }
 	}
 
 	auto chooseArena(bool containsPointers) {

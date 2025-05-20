@@ -94,6 +94,14 @@ public:
 		return reserveAddressSpace(size, alignment);
 	}
 
+	void* reserveAndCommitAddressSpace(size_t size) shared {
+		// Bump the alignement to block size if apropriate.
+		auto alignment = isAligned(size, BlockSize) ? BlockSize : PageSize;
+
+		size = alignUp(size, alignment);
+		return reserveAndCommitAddressSpace(size, alignment);
+	}
+
 	void* reserveAddressSpace(size_t size, size_t alignment) shared {
 		assert(alignment >= PageSize && isPow2(alignment),
 		       "Invalid alignment!");
@@ -103,6 +111,17 @@ public:
 		scope(exit) mutex.unlock();
 
 		return (cast(Base*) &this).reserveAddressSpaceImpl(size, alignment);
+	}
+
+	void* reserveAndCommitAddressSpace(size_t size, size_t alignment) shared {
+		auto ret = reserveAddressSpace(size, alignment);
+
+		if (ret !is null) {
+			import d.gc.memmap;
+			pages_commit(ret, size);
+		}
+
+		return ret;
 	}
 
 private:
@@ -161,10 +180,13 @@ private:
 		nextMetadataPage += PageSize;
 
 		// We just filled a block worth of metadata, make it huge!
+		import d.gc.memmap;
 		if (isAligned(nextMetadataPage, BlockSize)) {
-			import d.gc.memmap;
 			pages_hugify(nextMetadataPage - BlockSize, BlockSize);
 		}
+
+		// commit the page
+		pages_commit(ptr, PageSize);
 
 		return GenerationPointer(ptr, generation);
 	}

@@ -66,7 +66,7 @@ extern(C) void _d_register_sdc_gc()
 		import d.gc.thread;
 		createProcess();
 	}
-	else
+	else version(Posix)
 	{
 		// set druntime's signals to match ours, we are going to use their
 		// signal mechanisms. Have to do this before dmain2/thread_init.
@@ -82,8 +82,12 @@ extern(C) void _d_register_sdc_gc()
 	}
 	else
 	{
-		registerGCFactory("sdc", &initialize);
-		registerGCFactory("sdcq", &initializeQuiet);
+		version(Posix) {
+			registerGCFactory("sdc", &initialize);
+			registerGCFactory("sdcq", &initializeQuiet);
+		}
+		else
+			static assert(false, "No support for threadInit in gcinterface!");
 	}
 }
 
@@ -93,9 +97,9 @@ shared static this()
 }
 
 extern(C) {
-    // do not import GC modules, they might add a dependency to this whole module
-    void _d_register_conservative_gc();
-    void _d_register_manual_gc();
+	// do not import GC modules, they might add a dependency to this whole module
+	void _d_register_conservative_gc();
+	void _d_register_manual_gc();
 
 	// overtakes the function in core.internal.gc.
 	void* register_default_gcs()
@@ -124,22 +128,22 @@ private GC initializeQuiet()
 		createProcess();
 	}
 
-    // check the config to see if we should set the thread count for scanning.
-    import core.gc.config;
-    // ignore the thread count if it's the default.
-    if (config.parallel != typeof(config).init.parallel)
+	// check the config to see if we should set the thread count for scanning.
+	import core.gc.config;
+	// ignore the thread count if it's the default.
+	if (config.parallel != typeof(config).init.parallel)
 	{
 		import d.gc.collector;
 		setScanningThreads(config.parallel + 1);
 	}
-    return instance;
+	return instance;
 }
 
 private GC initialize()
 {
-    import core.stdc.stdio;
-    printf("using SDC GC!\n");
-    return initializeQuiet();
+	import core.stdc.stdio;
+	printf("using SDC GC!\n");
+	return initializeQuiet();
 }
 
 final class SnazzyGC : GC
@@ -601,7 +605,7 @@ bool hook_extendArrayUsed(void* ptr, size_t newUsed, size_t existingUsed) {
 
 pragma(mangle, "__sd_gc_hook_reserve_array_capacity")
 bool hook_reserveArrayCapacity(void* ptr, size_t request,
-                                    size_t existingUsed) {
+									size_t existingUsed) {
 	assert(request >= existingUsed);
 	return
 		threadCache.reserve(ptr[0 .. existingUsed + 1], request - existingUsed);

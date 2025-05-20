@@ -1,4 +1,5 @@
 module d.gc.signal;
+version(linux):
 
 import d.gc.tcache;
 import d.gc.tstate;
@@ -73,7 +74,7 @@ void suspendThreadFromSignal(ThreadState* ts) {
 	__sd_gc_push_registers(&call);
 }
 
-void suspendThreadDelayed(ThreadState* ts) {
+void suspendThreadDelayedWithSignals(ThreadState* ts) {
 	/**
 	 * First, we make sure that a resume handler cannot be called
 	 * before we suspend.
@@ -163,8 +164,32 @@ extern(C) void __sd_gc_signal_suspend(int sig, siginfo_t* info, void* context) {
 	auto oldErrno = errno;
 	scope(exit) errno = oldErrno;
 
+	version(Symgc_pthread_hook) { }
+	else {
+		// Note: this fixup is only necessary in version 2.111 of the
+		// compiler, where we do not have a thread startup hook for the GC.
+		import core.thread;
+		auto myThread = Thread.getThis();
+		assert(myThread !is null);
+		if (myThread.tlsGCData is null) {
+			// need to store the tlsGCData, but also need to jump to the
+			// signalled state, as this is what the main thread would have
+			// done if it had access to our threadcache. This only happens
+			// on the first suspend in the thread.
+			import d.gc.tcache;
+			threadCache.state.sendSuspendSignal();
+
+			// now, store the pointer to the threadcache inside mythread.
+			// After this point, GC cycles can directly access the
+			// threadcache.
+			myThread.tlsGCData = &threadCache;
+		}
+	}
+
 	import d.gc.tcache;
-	threadCache.state.onSuspendSignal();
+	if (threadCache.state.onSuspendSignal()) {
+		suspendThreadFromSignal(&threadCache.state);
+	}
 }
 
 extern(C) void __sd_gc_signal_resume(int sig) {

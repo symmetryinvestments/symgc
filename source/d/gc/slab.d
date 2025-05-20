@@ -148,7 +148,7 @@ public:
 }
 
 static assert(SlotMetadata.sizeof == size_t.sizeof,
-              "SlotMetadata must fit in size_t!");
+			  "SlotMetadata must fit in size_t!");
 
 struct SlabAllocInfo {
 private:
@@ -308,7 +308,7 @@ private:
 
 	auto slot = base.allocSlot();
 	auto e = Extent.fromSlot(0, slot);
-	auto block = base.reserveAddressSpace(BlockSize);
+	auto block = base.reserveAndCommitAddressSpace(BlockSize);
 	assert(block !is null);
 
 	SlabAllocInfo simulateSmallAlloc(size_t size, uint slotIndex) {
@@ -420,7 +420,7 @@ private:
  * For big endian support, we likely have to change the end where the bits go.
  */
 static assert(MaxSmallSize < 0x4000,
-              "Max small alloc size doesn't fit in 14 bits!");
+			  "Max small alloc size doesn't fit in 14 bits!");
 
 enum FinalizerBit = 1 << 14;
 enum SingleByteBit = 1 << 15;

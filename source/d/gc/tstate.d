@@ -79,45 +79,12 @@ public:
 	bool onSuspendSignal() {
 		auto s = state.load();
 
-		version(Symgc_pthread_hook) { }
-		else {
-			import core.thread;
-			auto myThread = Thread.getThis();
-			assert(myThread !is null);
-			if (myThread.tlsGCData is null) {
-				// need to store the tlsGCData, but also need to jump to the
-				// signalled state, as this is what the main thread would have
-				// done if it had access to our threadcache. This only happens
-				// on the first suspend in the thread.
-				assert(status(s) == SuspendState.None);
-				while (true) {
-					auto n = s + SuspendState.Signaled;
-					assert(status(n) == SuspendState.Signaled);
-
-					if (state.casWeak(s, n)) {
-						break;
-					}
-				}
-
-				// now, store the pointer to the threadcache inside mythread.
-				// After this point, GC cycles can directly access the
-				// threadcache.
-				import d.gc.tcache;
-				myThread.tlsGCData = &threadCache;
-
-				s = state.load();
-			}
-		}
-
 		while (true) {
 			assert(status(s) == SuspendState.Signaled);
 
 			// If the thread isn't busy, we can suspend
-			// from the signal handler.
+			// immediately.
 			if (s == SignaledState) {
-				import d.gc.signal;
-				suspendThreadFromSignal(&this);
-
 				return true;
 			}
 
@@ -180,7 +147,7 @@ private:
 			assert(status(s) != SuspendState.Suspended);
 
 			if (s == MustSuspendState) {
-				import d.gc.signal;
+				import d.gc.thread;
 				suspendThreadDelayed(&this);
 
 				return true;
@@ -230,21 +197,10 @@ private:
 	checkForState(SuspendState.None);
 	checkForState(SuspendState.Signaled);
 }
-
-version(unittest)
-private auto runThread(void* delegate() dg) {
-	extern(C) void* function(void*) fptr;
-	fptr = cast(typeof(fptr))dg.funcptr;
-	import core.sys.posix.pthread;
-	pthread_t tid;
-	auto r = pthread_create(&tid, null, fptr, dg.ptr);
-	assert(r == 0, "Failed to create thread!");
-
-	return tid;
-}
-
+version(Posix)
 @"suspend" unittest {
 	import d.gc.signal;
+	import symgc.test;
 	setupSignals();
 
 	// Make sure to use the state from the thread cache
@@ -333,8 +289,7 @@ private auto runThread(void* delegate() dg) {
 	scope(exit) {
 		setMustStop();
 
-		void* ret;
-		pthread_join(autoResumeThreadID, &ret);
+		joinThread(autoResumeThreadID);
 	}
 
 	void check(SuspendState ss, bool busy, uint suspendCount) {
@@ -351,6 +306,8 @@ private auto runThread(void* delegate() dg) {
 	check(SuspendState.Signaled, false, 0);
 
 	assert(s.onSuspendSignal());
+	suspendThreadFromSignal(s);
+
 	check(SuspendState.None, false, 1);
 	moveToNextStep();
 
@@ -370,5 +327,135 @@ private auto runThread(void* delegate() dg) {
 
 	assert(s.exitBusyState());
 	check(SuspendState.None, false, 2);
+	moveToNextStep();
+}
+
+version(Windows)
+@"suspend" unittest {
+	import symgc.test;
+	import d.gc.thread;
+
+	import d.gc.tcache;
+	ThreadState s;
+	scope(success) {
+		assert(s.state.load() == 0, "Invalid leftover state!");
+	}
+
+	import d.sync.atomic;
+	shared Atomic!uint resumeCount;
+
+	import d.sync.mutex;
+	shared Mutex mutex;
+	uint step = 0;
+	bool mustStop = false;
+
+	void moveToNextStep() {
+		mutex.lock();
+		scope(exit) mutex.unlock();
+
+		step++;
+	}
+
+	void setMustStop() {
+		mutex.lock();
+		scope(exit) mutex.unlock();
+
+		mustStop = true;
+	}
+
+	void* autoResume() {
+		mutex.lock();
+		scope(exit) mutex.unlock();
+		assert(step == 0, "Unexpected step when starting.");
+
+		uint nextStep = 1;
+
+		// Wait for the next test.
+		bool hasReachedNextStep() {
+			return mustStop || step >= nextStep;
+		}
+
+		while (!mustStop) {
+			// Wait for the main thread to be in a delayed state.
+			if (s.suspendState != SuspendState.Delayed) {
+				// Make sure we leave the opportunity to update mustStop!
+				mutex.unlock();
+				scope(exit) mutex.lock();
+
+				sched_yield();
+				continue;
+			}
+
+			delayedThreadInc();
+
+			waitForDelayedThreads();
+
+			// simulate suspending and then resuming.
+			s.markSuspended();
+
+			resumeCount.fetchAdd(1);
+
+			s.sendResumeSignal();
+
+			s.onResumeSignal();
+
+			simulateResumeTheWorld();
+
+			mutex.waitFor(&hasReachedNextStep);
+			nextStep = step + 1;
+		}
+
+		return null;
+	}
+
+	auto autoResumeThreadID = runThread(&autoResume);
+	scope(exit) {
+		setMustStop();
+
+		joinThread(autoResumeThreadID);
+	}
+
+	void check(SuspendState ss, bool busy, uint suspendCount) {
+		assert(s.suspendState == ss);
+		assert(s.busy == busy);
+		assert(resumeCount.load() == suspendCount);
+	}
+
+	// Check init state.
+	check(SuspendState.None, false, 0);
+
+	// Simple signal.
+	s.sendSuspendSignal();
+	check(SuspendState.Signaled, false, 0);
+
+	assert(s.onSuspendSignal());
+	s.markSuspended();
+	check(SuspendState.Suspended, false, 0);
+
+	s.sendResumeSignal();
+	check(SuspendState.Resumed, false, 0);
+
+	s.onResumeSignal();
+
+	check(SuspendState.None, false, 0);
+
+	// Signal while busy.
+	s.enterBusyState();
+	s.enterBusyState();
+	check(SuspendState.None, true, 0);
+
+	simulateStopTheWorld();
+
+	s.sendSuspendSignal();
+	check(SuspendState.Signaled, true, 0);
+
+	assert(!s.onSuspendSignal());
+	check(SuspendState.Delayed, true, 0);
+
+	assert(!s.exitBusyState());
+	check(SuspendState.Delayed, true, 0);
+
+	assert(s.exitBusyState());
+	check(SuspendState.None, false, 1);
 	moveToNextStep();
 }

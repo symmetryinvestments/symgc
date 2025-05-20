@@ -469,7 +469,7 @@ uint computeThreadCacheSize() {
 	shared Base base;
 	scope(exit) base.clear();
 
-	auto ptr = cast(void**) base.reserveAddressSpace(BlockSize);
+	auto ptr = cast(void**) base.reserveAndCommitAddressSpace(BlockSize);
 
 	foreach (i; 0 .. 200) {
 		ptr[i] = cast(void*) 0x100 + i;
@@ -528,7 +528,7 @@ uint computeThreadCacheSize() {
 	}
 
 	// No wrap around!
-	auto ptr0 = cast(void**) base.reserveAddressSpace(BlockSize);
+	auto ptr0 = cast(void**) base.reserveAndCommitAddressSpace(BlockSize);
 	auto tbin = getTBin(ptr0);
 
 	assert(tbin._top > tbin._bottom);

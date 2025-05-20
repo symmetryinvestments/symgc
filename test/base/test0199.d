@@ -26,6 +26,9 @@ extern(C) void __sd_gc_free(void* ptr);
 extern(C) void __sd_gc_add_roots(const void[] range);
 extern(C) void __sd_gc_remove_roots(const void* ptr);
 
+// in windows, we must use the SDC GC because we are using druntime's mechanisms.
+version(Windows) extern(C) __gshared rt_options = ["gcopt=gc:sdc"];
+
 int finalizerCalled;
 
 void finalize(void* ptr, size_t size) {
@@ -33,13 +36,28 @@ void finalize(void* ptr, size_t size) {
 }
 
 size_t allocate(bool pin) {
-	auto ptr = __sd_gc_alloc_finalizer(16, &finalize);
+	version(Windows) {
+		// using druntime finalizers. Need a struct typeinfo
+		static struct Finalizer {
+			ubyte[15] data;
+			~this() {
+				finalize(null, 0);
+			}
+		}
+		auto destructor = cast(void*)typeid(Finalizer);
+	} else version(linux) {
+		auto destructor = &finalize;
+	}
+	auto ptr = __sd_gc_alloc_finalizer(16, destructor);
 
 	if (pin) {
 		__sd_gc_add_roots(ptr[0 .. 0]);
 	}
 
-	return ~(cast(size_t) ptr);
+	// swap all the bits in the pointer before returning.
+	// This will also overwrite the stack data.
+	ptr = cast(void*)~cast(size_t)ptr;
+	return cast(size_t) ptr;
 }
 
 void unpin(size_t blk) {

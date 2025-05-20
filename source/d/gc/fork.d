@@ -1,5 +1,7 @@
 module d.gc.fork;
 
+version(linux):
+
 import core.sys.posix.pthread;
 
 void setupFork() {

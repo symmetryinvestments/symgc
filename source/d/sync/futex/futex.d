@@ -1,5 +1,6 @@
 module d.sync.futex.futex;
 
+version(linux):
 import d.sync.atomic;
 
 import core.sys.linux.futex;
@@ -12,7 +13,7 @@ extern(C) long syscall(long number, ...);
 enum SYS_futex = 202;
 
 int futex_wait(shared(Atomic!uint)* futex,
-               uint expected, /* TODO: timeout */ ) {
+			   uint expected, /* TODO: timeout */ ) {
 	import core.sys.posix.unistd;
 	auto err = syscall(SYS_futex, cast(uint*) futex, Futex.WaitPrivate,
 	                   expected, null);

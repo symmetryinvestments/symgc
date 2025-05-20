@@ -33,7 +33,7 @@ enum Level0Align = size_t(1) << Levels[0].shift;
 enum Level0Mask = Level0Size - 1;
 
 static assert((Level0Mask & BlockPointerMask) == 0,
-              "Cannot pack block pointer and level 0 key in one pointer!");
+		   "Cannot pack block pointer and level 0 key in one pointer!");
 
 struct RTree(T) {
 private:
@@ -172,15 +172,19 @@ public:
 
 			auto key1 = subKey(ptr, 1);
 
-			// If we need to clear the whole page, do so via purging.
-			// XXX: We might want to do it for smaller runs, but this is
-			// more complicated as the alternative path requires atomic ops.
-			if (key1 == 0 && stop >= nextPtr) {
-				import d.gc.memmap;
-				pages_purge(cast(void*) leaves.ptr, typeof(*leaves).sizeof);
+			// Windows does not have an atomic way to zero large numbers of pages.
+			// So we cannot use pages_purge on Windows.
+			version(linux) {
+				// If we need to clear the whole page, do so via purging.
+				// XXX: We might want to do it for smaller runs, but this is
+				// more complicated as the alternative path requires atomic ops.
+				if (key1 == 0 && stop >= nextPtr) {
+					import d.gc.memmap;
+					pages_purge(cast(void*) leaves.ptr, typeof(*leaves).sizeof);
 
-				ptr = nextPtr;
-				continue;
+					ptr = nextPtr;
+					continue;
+				}
 			}
 
 			auto subStop = stop < nextPtr ? stop : nextPtr;
@@ -243,7 +247,7 @@ private:
 			return leaves;
 		}
 
-		leaves = cast(Leaves) base.reserveAddressSpace(typeof(*leaves).sizeof);
+		leaves = cast(Leaves) base.reserveAndCommitAddressSpace(typeof(*leaves).sizeof);
 		nodes[key0].data.store!(MemoryOrder.Relaxed)(cast(size_t) leaves);
 		return leaves;
 	}
@@ -331,7 +335,7 @@ private:
 		}
 
 		// We had data in l1, push it in l2.
-        import core.stdc.string : memmove;
+		import core.stdc.string : memmove;
 		memmove(&l2[1], l2.ptr, CacheEntry.sizeof * (L2Size - 1));
 		l2[0] = e;
 	}
