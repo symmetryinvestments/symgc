@@ -2,6 +2,8 @@ module d.sync.win32.waiter;
 
 version(Windows):
 
+pragma(lib, "synchronization");
+
 import d.sync.atomic;
 
 import core.stdc.errno;
