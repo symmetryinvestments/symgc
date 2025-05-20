@@ -82,6 +82,8 @@ ThreadRunner!TSR* allocThreadRunner(TSR)(TSR fun, void* arg) {
 	return runner;
 }
 
+extern(C) void _d_print_throwable(Throwable t);
+
 extern(C) auto runThread(bool AllowStopTheWorld, TRunner)(TRunner* runner) {
 	import d.gc.capi : __sd_gc_free;
 	import d.gc.thread : createThread, destroyThread;
@@ -89,21 +91,28 @@ extern(C) auto runThread(bool AllowStopTheWorld, TRunner)(TRunner* runner) {
 	auto fun = runner.fun;
 	auto arg = runner.arg;
 
-	createThread!AllowStopTheWorld();
-	__sd_gc_free(runner);
+	try {
+		createThread!AllowStopTheWorld();
+		__sd_gc_free(runner);
 
-	// Make sure we clean up after ourselves.
-	scope(exit) destroyThread();
+		// Make sure we clean up after ourselves.
+		scope(exit) destroyThread();
 
-	// If the passed in function returns void, give a valid return to the OS
-	// function.
-	static if(is(typeof(fun(arg)) == void))
-	{
-		fun(arg);
-		return THREAD_RETURN_VALUE;
+		// If the passed in function returns void, give a valid return to the OS
+		// function.
+		static if(is(typeof(fun(arg)) == void))
+		{
+			fun(arg);
+			return THREAD_RETURN_VALUE;
+		}
+		else
+		{
+			return fun(arg);
+		}
+	} catch(Throwable t) {
+		// print the throwable
+		_d_print_throwable(t);
 	}
-	else
-	{
-		return fun(arg);
-	}
+
+	return THREAD_RETURN_VALUE;
 }
