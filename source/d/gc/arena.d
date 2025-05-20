@@ -59,8 +59,10 @@ public:
 	// for the arena. We do not use global data storage because the GC never
 	// needs to scan these.
 	static initializeArenaStorage(ref shared(Base) base) {
-		_arenaStore = cast(typeof(_arenaStore))
-			base.reserveAndCommitAddressSpace(ArenaSize * ArenaCount);
+		if (_arenaStore is null) {
+			_arenaStore = cast(typeof(_arenaStore))
+				base.reserveAndCommitAddressSpace(ArenaSize * ArenaCount);
+		}
 	}
 
 	static getInitialized(uint index) {

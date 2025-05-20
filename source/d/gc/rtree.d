@@ -203,8 +203,10 @@ public:
 	void initialize(ref shared Base base) shared {
 		// allocate the nodes for use. This must be called before any other
 		// methods are used.
-		_nodeStorage = cast(typeof(_nodeStorage))
-			base.reserveAndCommitAddressSpace(typeof(*_nodeStorage).sizeof);
+		if (_nodeStorage is null) {
+			_nodeStorage = cast(typeof(_nodeStorage))
+				base.reserveAndCommitAddressSpace(typeof(*_nodeStorage).sizeof);
+		}
 	}
 
 private:
