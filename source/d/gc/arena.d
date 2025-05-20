@@ -8,6 +8,9 @@ import d.gc.spec;
 
 import symgc.intrinsics;
 
+import d.gc.util;
+private enum ArenaSize = alignUp(Arena.sizeof, CacheLine);
+
 struct Arena {
 private:
 	ulong bits;
@@ -43,18 +46,23 @@ private:
 		return filler.usedPages;
 	}
 
+	private static shared void* _arenaStore;
+
 	static getArenaAddress(uint index) {
 		assert((index & ~ArenaMask) == 0, "Invalid index!");
 
-		// FIXME: align on cache lines.
-		import d.gc.util;
-		enum ArenaSize = alignUp(Arena.sizeof, CacheLine);
-		static shared ulong[ArenaSize / ulong.sizeof][ArenaCount] arenaStore;
-
-		return cast(shared(Arena)*) arenaStore[index].ptr;
+		return cast(shared(Arena)*) (_arenaStore + index * ArenaSize);
 	}
 
 public:
+	// Must call this before using any arena. This reserves the address space
+	// for the arena. We do not use global data storage because the GC never
+	// needs to scan these.
+	static initializeArenaStorage(ref shared(Base) base) {
+		_arenaStore = cast(typeof(_arenaStore))
+			base.reserveAndCommitAddressSpace(ArenaSize * ArenaCount);
+	}
+
 	static getInitialized(uint index) {
 		auto a = getArenaAddress(index);
 
