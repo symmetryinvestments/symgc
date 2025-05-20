@@ -1,0 +1,34 @@
+name: Main
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+    tags:
+      - '**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest,  dc: dmd-2.111.0}
+          - {os: ubuntu-latest,  dc: ldc-1.41.0-beta1}
+          - {os: windows-latest, dc: dmd-master}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install D compiler
+        uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ${{ matrix.dc }}
+      - name: Build and run unittests
+        run: dub test
+      - name: Build and run integration tests
+        run: cd test && dub

@@ -7,30 +7,34 @@
 	"description": "SDC Garbage collector, ported to dmd",
 	"license": "MIT",
 	"name": "symgc",
-	"libs-windows" : [
+	"libs-windows-dmd": [
 		"synchronization"
 	],
-	"configurations" : {
-		"standard" : {
+	"configurations" : [
+		{
+			"name": "standard",
 			"targetType": "library",
 			"versions": [
 				"Symgc_druntime_hooks"
 			]
 		},
-		"legacy" : {
+		{
+			"name": "legacy",
 			"targetType": "library",
 			"versions" : [
 				"Symgc_pthread_hook",
 				"Symgc_druntime_hooks"
 			]
 		},
-		"pthread" : {
+		{
+			"name": "pthread",
 			"targetType": "library",
 			"versions" : [
 				"Symgc_pthread_hook"
 			]
 		},
-		"integration" : {
+		{
+			"name": "integration",
 			"targetType": "library",
 			"versions-linux" : [
 				"Symgc_pthread_hook"
@@ -39,14 +43,15 @@
 				"Symgc_druntime_hooks"
 			]
 		},
-		"windowsdebug" : {
+		{
+			"name": "windowsdebug",
 			"targetType" : "executable",
 			"versions" : [
 				"Symgc_druntime_hooks",
 				"Symgc_test_main"
 			]
 		}
-	},
+	],
 	"buildTypes" : {
 		"unittest-x" : {
 			"buildOptions": ["unittests", "releaseMode", "optimize", "inline"],
