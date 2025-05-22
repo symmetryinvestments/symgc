@@ -96,6 +96,8 @@ private:
 	}
 
 	void collect(ubyte gcCycle) {
+		threadCache.startCollection();
+		scope(exit) threadCache.endCollection();
 		foreach (i; 0 .. ArenaCount) {
 			import d.gc.arena;
 			auto a = Arena.getIfInitialized(i);

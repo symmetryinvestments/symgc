@@ -79,6 +79,7 @@ private:
 	 */
 	size_t nextGCRun;
 	bool enableGC;
+	bool runningFinalization;
 
 	int nextGCRunClassOffset;
 	uint consecutiveSuccessfulGCRuns;
@@ -170,6 +171,17 @@ public:
 		scope(exit) enableGC = activated;
 		return enableGC;
 	}
+
+	package void startCollection() {
+		runningFinalization = true;
+	}
+
+	package void endCollection() {
+		runningFinalization = false;
+	}
+
+	// Is the current code being run from a finalizer?
+	@property bool inFinalizer() @safe @nogc nothrow => runningFinalization;
 
 	void destroyThread() {
 		state.enterBusyState();
