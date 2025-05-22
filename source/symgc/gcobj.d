@@ -366,8 +366,8 @@ final class SnazzyGC : GC
 	 */
 	bool inFinalizer() nothrow @nogc @safe
 	{
-		// TODO: add once there is a hook
-		return false;
+		import d.gc.tcache;
+		return threadCache.inFinalizer;
 	}
 
 	/**
