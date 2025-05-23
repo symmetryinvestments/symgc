@@ -165,7 +165,7 @@ private:
 
 	uint registeredThreadCount = 0;
 	uint suspendedThreadCount = 0;
-	uint delayedThreadCount = 0;
+	int delayedThreadCount = 0;
 
 	Mutex mThreadList;
 	ThreadRing registeredThreads;

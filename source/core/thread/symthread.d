@@ -123,11 +123,13 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 					continue;
 				}
 
-				// Could not suspend, handle a delayed suspend
+				// delayed, resume the thread, and increment the delayed thread count.
+				// IMPORTANT: We must FIRST resume the thread, as it may hold
+				// the lock that we need to increment the delayed count.
+				core_thread_osthread_resume(t);
 				import d.gc.thread : delayedThreadInc;
 				delayedThreadInc();
-				// delayed, resume the thread, and increment the delayed thread count.
-				core_thread_osthread_resume(t);
+
 				retry = true;
 			}
 		}
