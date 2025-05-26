@@ -202,7 +202,7 @@ bool resumeDruntimeThreads(ref uint suspended) {
 
 		version(Posix) {
 			suspended += ss == SuspendState.Suspended;
-			retry |= ss != SuspendState.None;
+			retry |= ss != SuspendState.Probation;
 
 			if (ss != SuspendState.Suspended)
 				continue;
@@ -224,4 +224,26 @@ bool resumeDruntimeThreads(ref uint suspended) {
 	// update the suspended count
 	suspendDepth = suspended;
 	return retry;
+}
+
+void clearDruntimeThreadProbation() {
+	import d.gc.tcache;
+	import d.gc.tstate;
+
+	foreach(t; ThreadIterator(ThreadBase.sm_tbeg.toThread))
+	{
+		auto tc = cast(ThreadCache*) t.tlsGCData();
+
+		if (tc is null) {
+			// if the threadcache is null, this means we didn't suspend it. skip it.
+			continue;
+		}
+
+		auto ss = tc.suspendState;
+
+		if (ss != SuspendState.Probation)
+			continue;
+
+		tc.clearProbationState();
+	}
 }

@@ -120,6 +120,8 @@ public:
 
 	auto markSuspended() => state.markSuspended();
 
+	auto clearProbationState() => state.clearProbationState();
+
 	void initialize(shared(ExtentMap)* emap, shared(Base)* base) {
 		this.emap = CachedExtentMap(emap, base);
 

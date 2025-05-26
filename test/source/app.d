@@ -6,6 +6,7 @@ import std.conv;
 import std.array;
 import std.range;
 import std.system;
+import core.time;
 
 struct TestHarness
 {
@@ -14,7 +15,9 @@ struct TestHarness
 	string output;
 	int expectedRetval;
 	int retval;
+	bool timedout;
 	OS[] platforms;
+	Duration timeout = 2.minutes;
 }
 
 TestHarness parseTest(string filename)
@@ -39,6 +42,9 @@ TestHarness parseTest(string filename)
 				case "platform":
 					harness.platforms = line[colon + 1 .. $].splitter(",").map!(s => s.strip.to!OS).array;
 					break;
+				case "timeout":
+					harness.timeout = line[colon + 1 .. $].strip.to!uint.msecs;
+					break;
 				default:
 					break;
 			}
@@ -50,6 +56,8 @@ TestHarness parseTest(string filename)
 bool runTest(ref TestHarness th, bool verbose, bool force)
 {
 	import std.process;
+	import core.thread;
+
 	write(i"TEST $(th.filename) ...");
 	stdout.flush();
 	auto args = ["dub", "--single"];
@@ -58,12 +66,73 @@ bool runTest(ref TestHarness th, bool verbose, bool force)
 	if(force)
 		args ~= "--force";
 	args ~= th.filename;
-	auto result = execute(args);
-	th.retval = result.status;
-	if(th.retval != th.expectedRetval) {
-		writeln(i"FAILED with return code $(th.retval), expected $(th.expectedRetval)");
+	auto pid = pipeProcess(args, Redirect.stdout | Redirect.stderrToStdout);
+	void processKiller() {
+		auto waitFor(Duration d) {
+			version(Posix) {
+				// no timed wait, have to use trywait
+				auto start = MonoTime.currTime;
+				while(true) {
+					auto r = tryWait(pid.pid);
+					if(r.terminated)
+						return r;
+					auto elapsed = MonoTime.currTime - start;
+					auto sleepTime = d - elapsed;
+					if(sleepTime < Duration.zero)
+						return r;
+					if(sleepTime > 100.msecs)
+						sleepTime = 100.msecs;
+					Thread.sleep(sleepTime);
+				}
+			} else {
+				return pid.waitTimeout(d);
+			}
+		}
+
+		auto r = waitFor(th.timeout);
+		if(!r.terminated)
+		{
+			th.timedout = true;
+			pid.pid.kill;
+			r = waitFor(1.seconds);
+			if (!r.terminated) {
+				// really kill it
+				version(Posix) {
+					import core.sys.posix.signal : SIGKILL;
+				} else {
+					enum SIGKILL = 9;
+				}
+				pid.pid.kill(SIGKILL);
+				r = waitFor(1.seconds);
+				if(!r.terminated)
+				{
+					stderr.writeln(i"Could not kill test process $(th.filename)!");
+					import core.stdc.stdlib;
+					exit(1);
+				}
+			}
+		}
+		th.retval = r.status;
+	}
+
+	auto killerThread = new Thread(&processKiller);
+	killerThread.start();
+
+	// accumulate the output from the process
+	auto a = appender!string;
+	foreach(ubyte[] chunk; pid.stdout.byChunk(4096))
+		put(a, chunk);
+
+	// killerThread is responsible for joining the process and filling in th.retval.
+	killerThread.join();
+
+	if(th.timedout || th.retval != th.expectedRetval) {
+		if(th.timedout)
+			writeln(i"FAILED timed out after $(th.timeout)!");
+		else
+			writeln(i"FAILED with return code $(th.retval), expected $(th.expectedRetval)");
 		writeln("test output:");
-		writeln(result.output);
+		writeln(a.data);
 		return false;
 	}
 	else
@@ -72,7 +141,7 @@ bool runTest(ref TestHarness th, bool verbose, bool force)
 		if(verbose)
 		{
 			writeln("test output:");
-			writeln(result.output);
+			writeln(a.data);
 		}
 		return true;
 	}
