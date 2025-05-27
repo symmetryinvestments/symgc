@@ -85,7 +85,7 @@ bool runTest(ref TestHarness th, bool verbose, bool force)
 					Thread.sleep(sleepTime);
 				}
 			} else {
-				return pid.waitTimeout(d);
+				return waitTimeout(pid.pid, d);
 			}
 		}
 

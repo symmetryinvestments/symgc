@@ -20,6 +20,9 @@
 import d.sync.atomic;
 import d.sync.mutex;
 
+// in windows, we must use the SDC GC because we are using druntime's mechanisms.
+version(Windows) extern(C) __gshared rt_options = ["gcopt=gc:sdc"];
+
 extern(C) void __sd_gc_collect();
 extern(C) void* __sd_gc_alloc_finalizer(size_t size, void* finalizer);
 

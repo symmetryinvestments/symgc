@@ -126,9 +126,11 @@ void waitForDelayedThreads() {
 version(Symgc_testing) {
 	void simulateStopTheWorld() {
 		gThreadState.stopTheWorldLock.exclusiveLock();
+		gThreadState.delayedSuspendLock.exclusiveLock();
 	}
 
 	void simulateResumeTheWorld() {
+		gThreadState.delayedSuspendLock.exclusiveUnlock();
 		gThreadState.stopTheWorldLock.exclusiveUnlock();
 	}
 }
@@ -286,7 +288,8 @@ public:
 		// finally, lock the delayed shared lock, which will be held by the GC
 		// runner until we are allowed to restart.
 		delayedSuspendLock.sharedLock();
-		assert(tstate.suspendState() == SuspendState.None);
+		auto s = tstate.suspendState();
+		assert(s == SuspendState.Probation || s == SuspendState.None);
 		delayedSuspendLock.sharedUnlock();
 	}
 
@@ -295,6 +298,10 @@ public:
 			import symgc.thread;
 			sched_yield();
 		}
+
+		// allow any threads that have called suspendThreadDelayedNoSignals to
+		// continue.
+		delayedSuspendLock.exclusiveUnlock();
 	}
 
 	void clearWorldProbation() shared {
@@ -307,10 +314,6 @@ public:
 		}
 
 		(cast(ThreadState*) &this).clearWorldProbationImpl();
-
-		// allow any threads that have called suspendThreadDelayedNoSignals to
-		// continue.
-		delayedSuspendLock.exclusiveUnlock();
 
 		import d.gc.hooks;
 		__sd_gc_post_restart_the_world_hook();
