@@ -102,6 +102,7 @@ private struct ScanningList {
 	}
 	else
 	{
+		import d.sync.mutex;
 		Mutex _mutex;
 		void initialize() {
 			// no-op
@@ -111,18 +112,18 @@ private struct ScanningList {
 			return cursor != 0 || activeThreads == 0;
 		}
 
-		bool mutexIsHeld() => mutex.isHeld();
+		bool mutexIsHeld() => _mutex.isHeld();
 
 		void addToWorkList(WorkItem[] items) shared {
-			mutex.lock();
-			scope(exit) mutex.unlock();
+			_mutex.lock();
+			scope(exit) _mutex.unlock();
 
-			(cast(Scanner*) &this).addToWorkListImpl(items);
+			(cast(ScanningList*) &this).addToWorkListImpl(items);
 		}
 
 		uint waitForWork(ref WorkItem[MaxRefill] refill) shared {
-			mutex.lock();
-			scope(exit) mutex.unlock();
+			_mutex.lock();
+			scope(exit) _mutex.unlock();
 
 			auto w = (cast(ScanningList*) &this);
 			w.activeThreads--;
@@ -135,7 +136,7 @@ private struct ScanningList {
 			* of active thread is 0, then we know no more work is coming
 			* and we should stop.
 			*/
-			mutex.waitFor(&w.hasWork);
+			_mutex.waitFor(&w.hasWork);
 
 			if (w.cursor == 0) {
 				return 0;
