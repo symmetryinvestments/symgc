@@ -9,19 +9,218 @@ import d.gc.slab;
 import d.gc.spec;
 import d.gc.util;
 
-struct Scanner {
-private:
-	import d.sync.mutex;
-	Mutex mutex;
-
+private struct ScanningList {
+	@disable this(this);
+	WorkItem[] worklist;
 	uint activeThreads;
 	uint cursor;
-	WorkItem[] worklist;
+	enum MaxRefill = 4;
+
+	version(Windows) {
+		// The windows implementation uses a similar mechanism to the druntime GC,
+		// since most locking schemes do not work on Windows with threads paused.
+		// Synchronizing the work list is done via a spinlock and an event system.
+		import core.internal.spinlock;
+		import core.sync.event;
+
+		shared SpinLock _spinlock;
+		Event workReadyEvent;
+
+		void initialize() {
+			_spinlock = SpinLock(SpinLock.Contention.brief);
+			workReadyEvent.initialize(true, false);
+		}
+
+		void addToWorkList(WorkItem[] items) shared {
+			_spinlock.lock();
+			scope(exit) _spinlock.unlock();
+
+			(cast(ScanningList*) &this).addToWorkListImpl(items);
+
+			(cast(Event*)&workReadyEvent).setIfInitialized();
+		}
+
+		// Note: SpinLock does not provide this information, even though it could.
+		bool mutexIsHeld() => true;
+
+		uint waitForWork(ref WorkItem[MaxRefill] refill) shared {
+			_spinlock.lock();
+			scope(exit) _spinlock.unlock();
+
+			auto w = (cast(ScanningList*) &this);
+			w.activeThreads--;
+
+			/**
+			* We wait for work to be present in the worklist.
+			* If there is, then we pick it up and start marking.
+			*
+			* Alternatively, if there is no work to do, and the number
+			* of active thread is 0, then we know no more work is coming
+			* and we should stop.
+			*/
+			while(w.cursor == 0 && w.activeThreads > 0) {
+				w.workReadyEvent.reset();
+				_spinlock.unlock();
+				import core.time;
+				w.workReadyEvent.wait();
+				_spinlock.lock();
+			}
+
+			if (w.cursor == 0) {
+				w.workReadyEvent.setIfInitialized(); // no more work, let everyone know.
+				return 0;
+			}
+
+			w.activeThreads++;
+
+			uint count = 1;
+			uint top = w.cursor;
+
+			refill[0] = w.worklist[top - count];
+			auto length = refill[0].length;
+
+			foreach (i; 1 .. min(top, MaxRefill)) {
+				auto next = w.worklist[top - count - 1];
+
+				auto nl = length + next.length;
+				if (nl > WorkItem.WorkUnit / 2) {
+					break;
+				}
+
+				count++;
+				length = nl;
+				refill[i] = next;
+			}
+
+			w.cursor = top - count;
+			if (w.cursor == 0) {
+				// reset the event, no work is ready any more
+				w.workReadyEvent.reset();
+			}
+			return count;
+		}
+	}
+	else
+	{
+		Mutex _mutex;
+		void initialize() {
+			// no-op
+		}
+
+		auto hasWork() {
+			return cursor != 0 || activeThreads == 0;
+		}
+
+		bool mutexIsHeld() => mutex.isHeld();
+
+		void addToWorkList(WorkItem[] items) shared {
+			mutex.lock();
+			scope(exit) mutex.unlock();
+
+			(cast(Scanner*) &this).addToWorkListImpl(items);
+		}
+
+		uint waitForWork(ref WorkItem[MaxRefill] refill) shared {
+			mutex.lock();
+			scope(exit) mutex.unlock();
+
+			auto w = (cast(ScanningList*) &this);
+			w.activeThreads--;
+
+			/**
+			* We wait for work to be present in the worklist.
+			* If there is, then we pick it up and start marking.
+			*
+			* Alternatively, if there is no work to do, and the number
+			* of active thread is 0, then we know no more work is coming
+			* and we should stop.
+			*/
+			mutex.waitFor(&w.hasWork);
+
+			if (w.cursor == 0) {
+				return 0;
+			}
+
+			w.activeThreads++;
+
+			uint count = 1;
+			uint top = w.cursor;
+
+			refill[0] = w.worklist[top - count];
+			auto length = refill[0].length;
+
+			foreach (i; 1 .. min(top, MaxRefill)) {
+				auto next = w.worklist[top - count - 1];
+
+				auto nl = length + next.length;
+				if (nl > WorkItem.WorkUnit / 2) {
+					break;
+				}
+
+				count++;
+				length = nl;
+				refill[i] = next;
+			}
+
+			w.cursor = top - count;
+			return count;
+		}
+	}
+
+	void ensureWorklistCapacity(size_t count) {
+		assert(mutexIsHeld(), "mutex not held!");
+		assert(count < uint.max, "Cannot reserve this much capacity!");
+
+		if (likely(count <= worklist.length)) {
+			return;
+		}
+
+		enum MinWorklistSize = 4 * PageSize;
+
+		auto size = count * WorkItem.sizeof;
+		if (size < MinWorklistSize) {
+			size = MinWorklistSize;
+		} else {
+			import d.gc.sizeclass;
+			size = getAllocSize(count * WorkItem.sizeof);
+		}
+
+		import d.gc.tcache;
+		auto ptr = threadCache.realloc(worklist.ptr, size, false);
+		worklist = (cast(WorkItem*) ptr)[0 .. size / WorkItem.sizeof];
+	}
+
+	void addToWorkListImpl(WorkItem[] items) {
+		assert(mutexIsHeld(), "mutex not held!");
+		assert(0 < items.length && items.length < uint.max,
+		       "Invalid item count!");
+
+		auto capacity = cursor + items.length;
+		ensureWorklistCapacity(capacity);
+
+		foreach (item; items) {
+			worklist[cursor++] = item;
+		}
+	}
+
+	void cleanup() shared {
+		assert(activeThreads == 0, "Still running threads!");
+
+		// We now done, we can free the worklist.
+		import d.gc.tcache;
+		threadCache.free(cast(void*) worklist.ptr);
+
+		worklist = null;
+	}
+}
+
+struct Scanner {
+private:
+	ScanningList work;
+
 
 	ubyte _gcCycle;
 	AddressRange _managedAddressSpace;
-
-	enum MaxRefill = 4;
 
 public:
 	this(uint threadCount, ubyte gcCycle, AddressRange managedAddressSpace) {
@@ -31,7 +230,7 @@ public:
 			assert(threadCount >= 1, "Expected at least one thread!");
 		}
 
-		activeThreads = threadCount;
+		work.activeThreads = threadCount;
 
 		this._gcCycle = gcCycle;
 		this._managedAddressSpace = managedAddressSpace;
@@ -52,8 +251,9 @@ public:
 	}
 
 	void mark() shared {
+		(cast(Scanner*)&this).work.initialize();
 		import symgc.thread;
-		auto threadCount = activeThreads - 1;
+		auto threadCount = work.activeThreads - 1;
 		import core.stdc.stdlib : alloca;
 		auto threadsPtr =
 			cast(ThreadHandle*) alloca(ThreadHandle.sizeof * threadCount);
@@ -78,24 +278,19 @@ public:
 		// Now send this thread marking!
 		runMark();
 
-		// We now done, we can free the worklist.
-		import d.gc.tcache;
-		threadCache.free(cast(void*) worklist.ptr);
+		work.cleanup();
 
 		foreach (tid; threads) {
 			joinGCThread(tid);
 		}
 	}
 
-	void addToWorkList(WorkItem[] items) shared {
-		mutex.lock();
-		scope(exit) mutex.unlock();
-
-		(cast(Scanner*) &this).addToWorkListImpl(items);
+	void addToWorkList(WorkItem item) shared {
+		work.addToWorkList((&item)[0 .. 1]);
 	}
 
-	void addToWorkList(WorkItem item) shared {
-		addToWorkList((&item)[0 .. 1]);
+	void addToWorkList(WorkItem[] items) shared {
+		work.addToWorkList(items);
 	}
 
 	void processGlobal(const(void*)[] range) shared {
@@ -118,7 +313,7 @@ public:
 				u = WorkItem.extractFromRange(range);
 			}
 
-			addToWorkList(units[0 .. count]);
+			work.addToWorkList(units[0 .. count]);
 		}
 	}
 
@@ -143,9 +338,9 @@ private:
 		import d.gc.thread;
 		threadScan(&worker.scan);
 
-		WorkItem[MaxRefill] refill;
+		WorkItem[ScanningList.MaxRefill] refill;
 		while (true) {
-			auto count = waitForWork(refill);
+			auto count = work.waitForWork(refill);
 			if (count == 0) {
 				// We are done, there is no more work items.
 				return;
@@ -154,92 +349,6 @@ private:
 			foreach (i; 0 .. count) {
 				worker.scan(refill[i]);
 			}
-		}
-	}
-
-	auto hasWork() {
-		return cursor != 0 || activeThreads == 0;
-	}
-
-	uint waitForWork(ref WorkItem[MaxRefill] refill) shared {
-		mutex.lock();
-		scope(exit) mutex.unlock();
-
-		auto w = (cast(Scanner*) &this);
-		w.activeThreads--;
-
-		/**
-		 * We wait for work to be present in the worklist.
-		 * If there is, then we pick it up and start marking.
-		 *
-		 * Alternatively, if there is no work to do, and the number
-		 * of active thread is 0, then we know no more work is coming
-		 * and we should stop.
-		 */
-		mutex.waitFor(&w.hasWork);
-
-		if (w.cursor == 0) {
-			return 0;
-		}
-
-		w.activeThreads++;
-
-		uint count = 1;
-		uint top = w.cursor;
-
-		refill[0] = w.worklist[top - count];
-		auto length = refill[0].length;
-
-		foreach (i; 1 .. min(top, MaxRefill)) {
-			auto next = w.worklist[top - count - 1];
-
-			auto nl = length + next.length;
-			if (nl > WorkItem.WorkUnit / 2) {
-				break;
-			}
-
-			count++;
-			length = nl;
-			refill[i] = next;
-		}
-
-		w.cursor = top - count;
-		return count;
-	}
-
-	void ensureWorklistCapacity(size_t count) {
-		assert(mutex.isHeld(), "mutex not held!");
-		assert(count < uint.max, "Cannot reserve this much capacity!");
-
-		if (likely(count <= worklist.length)) {
-			return;
-		}
-
-		enum MinWorklistSize = 4 * PageSize;
-
-		auto size = count * WorkItem.sizeof;
-		if (size < MinWorklistSize) {
-			size = MinWorklistSize;
-		} else {
-			import d.gc.sizeclass;
-			size = getAllocSize(count * WorkItem.sizeof);
-		}
-
-		import d.gc.tcache;
-		auto ptr = threadCache.realloc(worklist.ptr, size, false);
-		worklist = (cast(WorkItem*) ptr)[0 .. size / WorkItem.sizeof];
-	}
-
-	void addToWorkListImpl(WorkItem[] items) {
-		assert(mutex.isHeld(), "mutex not held!");
-		assert(0 < items.length && items.length < uint.max,
-		       "Invalid item count!");
-
-		auto capacity = cursor + items.length;
-		ensureWorklistCapacity(capacity);
-
-		foreach (item; items) {
-			worklist[cursor++] = item;
 		}
 	}
 }

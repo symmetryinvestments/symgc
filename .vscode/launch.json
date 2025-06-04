@@ -16,6 +16,11 @@
 			"console":"integratedTerminal"
 		},
         {
+			"name": "(Windows) Attach",
+			"type": "cppvsdbg",
+			"request": "attach"
+		},
+        {
             "type": "code-d",
             "request": "launch",
             "name": "Debug D project",

@@ -10,7 +10,7 @@
    }
 +/
 //T retval:0
-//T desc: Test finalizer support
+//T desc: Test mutex contention
 
 import d.sync.mutex;
 
@@ -23,14 +23,16 @@ __gshared bool exiting;
 void producer()
 {
 
-	m.lock();
-	scope(exit) m.unlock();
 	bool underflow() {
-		return widgets < 1000;
+		return exiting || widgets < 1000;
 	}
-	while(!exiting)
+
+	while(true)
 	{
+		m.lock();
+		scope(exit) m.unlock();
 		m.waitFor(&underflow);
+		if(exiting) break;
 		assert(widgets < 1000);
 		++widgets;
 		++total;
@@ -41,17 +43,18 @@ void producer()
 
 void consumer()
 {
-	m.lock();
-	scope(exit) m.unlock();
-
 	bool available() {
-		return widgets != 0;
+		return exiting || widgets != 0;
 	}
 
 	int consumed = 0;
-	while(!exiting)
+	while(true)
 	{
+		m.lock();
+		scope(exit) m.unlock();
+
 		m.waitFor(&available);
+		if(widgets == 0 && exiting) break;
 		assert(widgets > 0);
 		--widgets;
 		if(++consumed % 100000 == 0) {
@@ -74,5 +77,5 @@ void main()
 		t.join();
 	}
 	import std.stdio;
-	writeln("produced ", total, " widgets");
+	assert(total == stopAfter + 1);
 }
