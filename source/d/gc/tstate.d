@@ -13,6 +13,8 @@ enum SuspendState {
 	Suspended,
 	// The thread is in the process of resuming operations.
 	Resumed,
+	// The thread cannot use the GC because a collect is happening.
+	Probation,
 	// The thread is detached. The GC won't stop it.
 	Detached,
 }
@@ -27,6 +29,9 @@ private:
 	import d.sync.atomic;
 	shared Atomic!size_t state;
 
+	import d.sync.mutex;
+	shared Mutex busyWaitMutex;
+
 	enum BusyIncrement = 0x08;
 
 	enum RunningState = SuspendState.None;
@@ -34,6 +39,7 @@ private:
 	enum SuspendedState = SuspendState.Suspended;
 	enum DelayedState = SuspendState.Delayed;
 	enum ResumedState = SuspendState.Resumed;
+	enum ProbationState = SuspendState.Probation;
 
 	enum MustSuspendState = BusyIncrement | SuspendState.Delayed;
 
@@ -114,12 +120,22 @@ public:
 
 	void onResumeSignal() {
 		assert(state.load() == ResumedState);
-		state.store(RunningState);
+		state.store(ProbationState);
 	}
 
 	void enterBusyState() {
 		auto s = state.fetchAdd(BusyIncrement);
 		assert(status(s) != SuspendState.Suspended);
+
+		if (status(s) != ProbationState) {
+			return;
+		}
+
+		// In Probation state, we need to wait until the GC cycle is done
+		// before doing anything.
+		busyWaitMutex.lock();
+		scope(exit) busyWaitMutex.unlock();
+		busyWaitMutex.waitFor(&offProbation);
 	}
 
 	bool exitBusyState() {
@@ -129,6 +145,31 @@ public:
 		}
 
 		return exitBusyStateSlow(s);
+	}
+
+	void clearProbationState() {
+		size_t s = ProbationState;
+		if (state.casWeak(s, RunningState)) {
+			return;
+		}
+
+		// The thread has now tried to enter a busy state. Must use the
+		// lock to to wake it up.
+		busyWaitMutex.lock();
+		scope(exit) busyWaitMutex.unlock();
+		while (true) {
+			enum BusyMask = ~(BusyIncrement - 1);
+			auto n = s & BusyMask;
+
+			assert(s >= BusyIncrement);
+			assert(n >= BusyIncrement);
+			assert(status(s) == ProbationState);
+			assert(status(n) == RunningState);
+
+			if (state.casWeak(s, n)) {
+				break;
+			}
+		}
 	}
 
 package:
@@ -141,6 +182,12 @@ package:
 	}
 
 private:
+	bool offProbation() {
+		auto s = state.load();
+		assert(s >= BusyIncrement);
+		return status(s) != ProbationState;
+	}
+
 	bool exitBusyStateSlow(size_t s) {
 		while (true) {
 			assert(s >= BusyIncrement);
@@ -228,6 +275,7 @@ version(Posix)
 
 	import d.sync.atomic;
 	shared Atomic!uint resumeCount;
+	shared Atomic!uint lockedProbationCount;
 
 	import d.sync.mutex;
 	shared Mutex mutex;
@@ -248,6 +296,19 @@ version(Posix)
 		mustStop = true;
 	}
 
+	bool waitForState(SuspendState state, bool needBusy) {
+		// Wait for the main thread to progress to the given state.
+		while (!mustStop && s.suspendState != state || (needBusy && !s.busy)) {
+			// Make sure we leave the opportunity to update mustStop!
+			mutex.unlock();
+			scope(exit) mutex.lock();
+
+			sched_yield();
+		}
+
+		return !mustStop;
+	}
+
 	void* autoResume() {
 		mutex.lock();
 		scope(exit) mutex.unlock();
@@ -255,16 +316,9 @@ version(Posix)
 
 		uint nextStep = 1;
 
-		while (!mustStop) {
-			// Wait for the main thread to be suspended.
-			if (s.suspendState != SuspendState.Suspended) {
-				// Make sure we leave the opportunity to update mustStop!
-				mutex.unlock();
-				scope(exit) mutex.lock();
-
-				import core.sys.posix.sched;
-				sched_yield();
-				continue;
+		while (true) {
+			if (!waitForState(SuspendState.Suspended, false)) {
+				break;
 			}
 
 			// It is suspend, resume it.
@@ -275,8 +329,26 @@ version(Posix)
 
 			// Wait for the next test.
 			bool hasReachedNextStep() {
-				return step >= nextStep;
+				return mustStop || step >= nextStep;
 			}
+
+			mutex.waitFor(&hasReachedNextStep);
+			nextStep = step + 1;
+
+			// If the probation state was skipped, we don't need to handle it here.
+			if (s.suspendState != SuspendState.Probation) {
+				continue;
+			}
+
+			// Wait for the probation state
+			if (!waitForState(SuspendState.Probation, true)) {
+				break;
+			}
+
+			// Locked on probation, clear the probation state.
+			lockedProbationCount.fetchAdd(1);
+
+			s.clearProbationState();
 
 			mutex.waitFor(&hasReachedNextStep);
 			nextStep = step + 1;
@@ -292,41 +364,55 @@ version(Posix)
 		joinThread(autoResumeThreadID);
 	}
 
-	void check(SuspendState ss, bool busy, uint suspendCount) {
+	void check(SuspendState ss, bool busy, uint suspendCount,
+			uint probationCount) {
 		assert(s.suspendState == ss);
 		assert(s.busy == busy);
 		assert(resumeCount.load() == suspendCount);
+		assert(lockedProbationCount.load() == probationCount);
 	}
 
 	// Check init state.
-	check(SuspendState.None, false, 0);
+	check(SuspendState.None, false, 0, 0);
 
 	// Simple signal.
 	s.sendSuspendSignal();
-	check(SuspendState.Signaled, false, 0);
+	check(SuspendState.Signaled, false, 0, 0);
 
 	assert(s.onSuspendSignal());
 	suspendThreadFromSignal(s);
 
-	check(SuspendState.None, false, 1);
+	check(SuspendState.Probation, false, 1, 0);
+
+	// Clear the probation
+	s.clearProbationState();
+	check(SuspendState.None, false, 1, 0);
 	moveToNextStep();
 
 	// Signal while busy.
 	s.sendSuspendSignal();
-	check(SuspendState.Signaled, false, 1);
+	check(SuspendState.Signaled, false, 1, 0);
 
 	s.enterBusyState();
 	s.enterBusyState();
-	check(SuspendState.Signaled, true, 1);
+	check(SuspendState.Signaled, true, 1, 0);
 
 	assert(!s.onSuspendSignal());
-	check(SuspendState.Delayed, true, 1);
+	check(SuspendState.Delayed, true, 1, 0);
 
 	assert(!s.exitBusyState());
-	check(SuspendState.Delayed, true, 1);
+	check(SuspendState.Delayed, true, 1, 0);
 
 	assert(s.exitBusyState());
-	check(SuspendState.None, false, 2);
+	check(SuspendState.Probation, false, 2, 0);
+	moveToNextStep();
+
+	// Enter busy state while on probation
+	s.enterBusyState();
+	check(SuspendState.None, true, 2, 1);
+
+	assert(!s.exitBusyState());
+	check(SuspendState.None, false, 2, 1);
 	moveToNextStep();
 }
 
@@ -343,6 +429,7 @@ version(Windows)
 
 	import d.sync.atomic;
 	shared Atomic!uint resumeCount;
+	shared Atomic!uint lockedProbationCount;
 
 	import d.sync.mutex;
 	shared Mutex mutex;
@@ -363,6 +450,19 @@ version(Windows)
 		mustStop = true;
 	}
 
+	bool waitForState(SuspendState state, bool needBusy) {
+		// Wait for the main thread to progress to the given state.
+		while (!mustStop && s.suspendState != state || (needBusy && !s.busy)) {
+			// Make sure we leave the opportunity to update mustStop!
+			mutex.unlock();
+			scope(exit) mutex.lock();
+
+			sched_yield();
+		}
+
+		return !mustStop;
+	}
+
 	void* autoResume() {
 		mutex.lock();
 		scope(exit) mutex.unlock();
@@ -377,14 +477,7 @@ version(Windows)
 
 		while (!mustStop) {
 			// Wait for the main thread to be in a delayed state.
-			if (s.suspendState != SuspendState.Delayed) {
-				// Make sure we leave the opportunity to update mustStop!
-				mutex.unlock();
-				scope(exit) mutex.lock();
-
-				sched_yield();
-				continue;
-			}
+			waitForState(SuspendState.Delayed, false);
 
 			delayedThreadInc();
 
@@ -403,6 +496,24 @@ version(Windows)
 
 			mutex.waitFor(&hasReachedNextStep);
 			nextStep = step + 1;
+
+			// If the probation state was skipped, we don't need to handle it here.
+			if (s.suspendState != SuspendState.Probation) {
+				continue;
+			}
+
+			// Wait for the probation state
+			if (!waitForState(SuspendState.Probation, true)) {
+				break;
+			}
+
+			// Locked on probation, clear the probation state.
+			lockedProbationCount.fetchAdd(1);
+
+			s.clearProbationState();
+
+			mutex.waitFor(&hasReachedNextStep);
+			nextStep = step + 1;
 		}
 
 		return null;
@@ -415,47 +526,58 @@ version(Windows)
 		joinThread(autoResumeThreadID);
 	}
 
-	void check(SuspendState ss, bool busy, uint suspendCount) {
+	void check(SuspendState ss, bool busy, uint suspendCount,
+	uint probationCount) {
 		assert(s.suspendState == ss);
 		assert(s.busy == busy);
 		assert(resumeCount.load() == suspendCount);
+		assert(lockedProbationCount.load() == probationCount);
 	}
 
 	// Check init state.
-	check(SuspendState.None, false, 0);
+	check(SuspendState.None, false, 0, 0);
 
 	// Simple signal.
 	s.sendSuspendSignal();
-	check(SuspendState.Signaled, false, 0);
+	check(SuspendState.Signaled, false, 0, 0);
 
 	assert(s.onSuspendSignal());
 	s.markSuspended();
-	check(SuspendState.Suspended, false, 0);
+	check(SuspendState.Suspended, false, 0, 0);
 
 	s.sendResumeSignal();
-	check(SuspendState.Resumed, false, 0);
+	check(SuspendState.Resumed, false, 0, 0);
 
 	s.onResumeSignal();
 
-	check(SuspendState.None, false, 0);
+	check(SuspendState.Probation, false, 0, 0);
+	s.clearProbationState();
+	check(SuspendState.None, false, 0, 0);
 
 	// Signal while busy.
 	s.enterBusyState();
 	s.enterBusyState();
-	check(SuspendState.None, true, 0);
+	check(SuspendState.None, true, 0, 0);
 
 	simulateStopTheWorld();
 
 	s.sendSuspendSignal();
-	check(SuspendState.Signaled, true, 0);
+	check(SuspendState.Signaled, true, 0, 0);
 
 	assert(!s.onSuspendSignal());
-	check(SuspendState.Delayed, true, 0);
+	check(SuspendState.Delayed, true, 0, 0);
 
 	assert(!s.exitBusyState());
-	check(SuspendState.Delayed, true, 0);
+	check(SuspendState.Delayed, true, 0, 0);
 
 	assert(s.exitBusyState());
-	check(SuspendState.None, false, 1);
+	check(SuspendState.Probation, false, 1, 0);
 	moveToNextStep();
+
+	// try entering a busy state while in probation.
+	s.enterBusyState();
+	check(SuspendState.None, true, 1, 1);
+	assert(!s.exitBusyState());
+
+	check(SuspendState.None, false, 1, 1);
 }

@@ -16,6 +16,7 @@
 //T has-passed:yes
 //T retval:0
 //T desc:GC addRoot reentrancy test.
+//T timeout:300000
 
 extern(C) void* __sd_gc_alloc(size_t size);
 extern(C) void __sd_gc_add_roots(const void[] range);

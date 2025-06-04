@@ -102,6 +102,10 @@ void restartTheWorld() {
 	gThreadState.restartTheWorld();
 }
 
+void clearWorldProbation() {
+	gThreadState.clearWorldProbation();
+}
+
 void suspendThreadDelayed(d.gc.tstate.ThreadState* tstate) {
 	version(linux) {
 		import d.gc.signal : suspendThreadDelayedWithSignals;
@@ -122,9 +126,11 @@ void waitForDelayedThreads() {
 version(Symgc_testing) {
 	void simulateStopTheWorld() {
 		gThreadState.stopTheWorldLock.exclusiveLock();
+		gThreadState.delayedSuspendLock.exclusiveLock();
 	}
 
 	void simulateResumeTheWorld() {
+		gThreadState.delayedSuspendLock.exclusiveUnlock();
 		gThreadState.stopTheWorldLock.exclusiveUnlock();
 	}
 }
@@ -172,6 +178,14 @@ private:
 
 	import d.sync.sharedlock;
 	shared SharedLock stopTheWorldLock;
+
+	// delayed suspend lock is used to synchronize when the delayed suspend
+	// should continue on systems without signals. This is locked when
+	// suspending the world exclusively, and then unlocked when the delayed
+	// threads should continue.
+	// NOTE: we can probably merge STW lock and this lock once we remove
+	// support for the pthread hook.
+	shared SharedLock delayedSuspendLock;
 
 public:
 	/**
@@ -231,6 +245,9 @@ public:
 		// Prevent any new threads from being created
 		stopTheWorldLock.exclusiveLock();
 
+		// get ready for delayed threads that use the lock for synchronization.
+		delayedSuspendLock.exclusiveLock();
+
 		uint count;
 
 		while (suspendRunningThreads(count++)) {
@@ -268,11 +285,12 @@ public:
 		// We are no longer delayed, can be suspended
 		delayedThreadDec();
 
-		// finally, lock the stop-the-world mutex, and resume operations. We will
-		// not proceed until the STW mutex is unlocked.
-		stopTheWorldLock.sharedLock();
-		assert(tstate.suspendState() == SuspendState.None);
-		stopTheWorldLock.sharedUnlock();
+		// finally, lock the delayed shared lock, which will be held by the GC
+		// runner until we are allowed to restart.
+		delayedSuspendLock.sharedLock();
+		auto s = tstate.suspendState();
+		assert(s == SuspendState.Probation || s == SuspendState.None);
+		delayedSuspendLock.sharedUnlock();
 	}
 
 	void restartTheWorld() shared {
@@ -281,8 +299,21 @@ public:
 			sched_yield();
 		}
 
+		// allow any threads that have called suspendThreadDelayedNoSignals to
+		// continue.
+		delayedSuspendLock.exclusiveUnlock();
+	}
+
+	void clearWorldProbation() shared {
 		// Allow thread creation again.
 		stopTheWorldLock.exclusiveUnlock();
+
+		version(Symgc_pthread_hook) {
+			mThreadList.lock();
+			scope(exit) mThreadList.unlock();
+		}
+
+		(cast(ThreadState*) &this).clearWorldProbationImpl();
 
 		import d.gc.hooks;
 		__sd_gc_post_restart_the_world_hook();
@@ -400,6 +431,11 @@ private:
 				auto tc = r.front;
 				scope(success) r.popFront();
 
+				// No need to resume our own thread!
+				if (tc is &threadCache) {
+					continue;
+				}
+
 				// If the thread isn't already resumed, we'll need to retry.
 				auto ss = tc.state.suspendState;
 				if (ss == SuspendState.Detached) {
@@ -407,7 +443,7 @@ private:
 				}
 
 				suspended += ss == SuspendState.Suspended;
-				retry |= ss != SuspendState.None;
+				retry |= ss != SuspendState.Probation;
 
 				// If the thread isn't suspended, move on.
 				if (ss != SuspendState.Suspended) {
@@ -459,6 +495,24 @@ private:
 				scanWorldPausedData(scan);
 			}
 		}
+
+		void clearWorldProbationImpl() {
+			assert(mThreadList.isHeld(), "Mutex not held!");
+
+			auto r = registeredThreads.range;
+			while (!r.empty) {
+				auto tc = r.front;
+				scope(success) r.popFront();
+
+				auto ss = tc.state.suspendState;
+				if (ss != SuspendState.Probation) {
+					continue;
+				}
+
+				tc.state.clearProbationState();
+			}
+		}
+
 	} else {
 		bool suspendRunningThreads(uint count) shared {
 			// We are going to use druntime's thread list to iterate over
@@ -499,6 +553,11 @@ private:
 			// use our specialized druntime function
 			import core.thread.symthread;
 			scanWorldPausedData(scan);
+		}
+
+		void clearWorldProbationImpl() {
+			import core.thread.symthread;
+			clearDruntimeThreadProbation();
 		}
 	}
 }

@@ -16,6 +16,11 @@
 			"console":"integratedTerminal"
 		},
         {
+			"name": "(Windows) Attach",
+			"type": "cppvsdbg",
+			"request": "attach"
+		},
+        {
             "type": "code-d",
             "request": "launch",
             "name": "Debug D project",
@@ -25,9 +30,9 @@
         {
             "type": "code-d",
             "request": "launch",
-            "name": "Debug D project test200",
+            "name": "Debug D project test203",
             "cwd": "${workspaceFolder}",
-            "program": "./test/base/bin/test0200.exe"
+            "program": "./test/base/bin/test0203.exe"
         }
     ]
 }
