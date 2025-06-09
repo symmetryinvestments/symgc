@@ -39,11 +39,29 @@ private:
 		auto oldGCActivationState = threadCache.activateGC(false);
 		scope(exit) threadCache.activateGC(oldGCActivationState);
 
-		import d.gc.thread;
-		stopTheWorld();
-
 		import d.gc.global;
 		auto gcCycle = gState.nextGCCycle();
+
+		// set up the scanner
+		import d.gc.scanner;
+		auto scanner = Scanner(gcCycle);
+
+		// start the threads
+		auto threadCount = gCollectorState.scanningThreads;
+		if (threadCount == 0) {
+			import d.gc.cpu;
+			threadCount = getCoreCount();
+			assert(threadCount >= 1, "Expected at least one thread!");
+		}
+
+		import symgc.thread;
+		auto threads = (cast(ThreadHandle*)threadCache.alloc(ThreadHandle.sizeof * (threadCount - 1), false, false))[0 .. threadCount];
+		scanner.startThreads(threads);
+
+		import core.thread;
+		//Thread.sleep(20.msecs);
+		import d.gc.thread;
+		stopTheWorld();
 
 		import d.gc.region;
 		auto dataRange = gDataRegionAllocator.computeAddressRange();
@@ -54,12 +72,15 @@ private:
 
 		prepareGCCycle();
 
-		import d.gc.scanner;
-		shared(Scanner) scanner = cast(shared)Scanner(gCollectorState.scanningThreads,
-				gcCycle, managedAddressSpace);
-
 		// Go on and on until all worklists are empty.
-		scanner.mark();
+		(cast(shared(Scanner*))&scanner).mark(managedAddressSpace);
+
+		restartTheWorld();
+
+		(cast(shared(Scanner*))&scanner).joinThreads(threads);
+
+		// clean up the thread list pointer
+		threadCache.free(threads.ptr);
 
 		/**
 		 * We might have allocated, and therefore refilled the bin
@@ -72,8 +93,6 @@ private:
 		 * Alternatively, we could make sure the slots are marked.
 		 */
 		threadCache.flush();
-
-		restartTheWorld();
 
 		collect(gcCycle);
 
