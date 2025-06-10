@@ -55,11 +55,10 @@ private:
 		}
 
 		import symgc.thread;
-		auto threads = (cast(ThreadHandle*)threadCache.alloc(ThreadHandle.sizeof * (threadCount - 1), false, false))[0 .. threadCount];
+		auto nScanningThreads = threadCount - 1;
+		auto threads = (cast(ThreadHandle*)threadCache.alloc(ThreadHandle.sizeof * nScanningThreads, false, false))[0 .. nScanningThreads];
 		scanner.startThreads(threads);
 
-		import core.thread;
-		//Thread.sleep(20.msecs);
 		import d.gc.thread;
 		stopTheWorld();
 
