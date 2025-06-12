@@ -127,11 +127,13 @@ private struct ScanningList {
 		}
 
 		void scanThreadStarted() shared {
-			mutex.lock();
-			scope(exit) mutex.unlock();
+			auto w = (cast(ScanningList*) &this);
+
+			_mutex.lock();
+			scope(exit) _mutex.unlock();
 
 			// ready to receive scan work.
-			++activeThreads;
+			++w.activeThreads;
 		}
 
 		uint waitForWork(ref WorkItem[MaxRefill] refill) shared {

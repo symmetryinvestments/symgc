@@ -22,7 +22,7 @@ extern(C) int pthread_create(pthread_t* thread, scope const pthread_attr_t* attr
 
 	auto ret =
 		pthread_create_trampoline(thread, attr,
-				cast(PthreadFunction) runner.getFunction!true(), runner);
+				cast(PthreadFunction) runner.getFunction!false(), runner);
 	if (ret != 0) {
 		// The spawned thread will call this when there are no errors.
 		allowStopTheWorld();

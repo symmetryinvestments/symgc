@@ -82,6 +82,20 @@ public:
 		}
 	}
 
+	void preventPausing() {
+		auto s = state.load();
+		while (true) {
+			auto n = s + SuspendState.Detached;
+
+			assert(status(s) == SuspendState.None);
+			assert(status(n) == SuspendState.Detached);
+
+			if (state.casWeak(s, n)) {
+				break;
+			}
+		}
+	}
+
 	bool onSuspendSignal() {
 		auto s = state.load();
 
