@@ -264,7 +264,11 @@ public:
 			threadCache.activateGC(false);
 
 			auto scanner = cast(shared(Scanner)*) ctx;
-			// This holds off the spawned threads until the GC is ready to run.
+			// Deferring becoming active until the thread is fully started
+			// allows the scan to complete if this thread couldn't start (which
+			// can happen in the case of a race between the thread starting and
+			// a paused thread holding a critical lock needed to start
+			// threads).
 			scanner.work.scanThreadStarted();
 			scanner.runMark();
 		}
