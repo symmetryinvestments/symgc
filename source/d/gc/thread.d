@@ -33,21 +33,28 @@ void createProcess() {
 	}
 }
 
-void createThread(bool AllowStopTheWorld)() {
+void createThread(bool BackgroundThread)() {
 	enterBusyState();
 	scope(exit) {
-		if (AllowStopTheWorld) {
+		if (!BackgroundThread) {
 			allowStopTheWorld();
 		}
 
 		exitBusyState();
 	}
 
+	if(BackgroundThread) {
+		// make sure this thread is not paused for scanning.
+		threadCache.state.preventPausing();
+	}
+
 	initThread();
 
 	version(Symgc_pthread_hook) {
-		import symgc.rt;
-		registerTlsSegments();
+		if(!BackgroundThread) {
+			import symgc.rt;
+			registerTlsSegments();
+		}
 	}
 }
 
