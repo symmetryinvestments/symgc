@@ -36,8 +36,10 @@ void createProcess() {
 void createThread(bool BackgroundThread)() {
 	enterBusyState();
 	scope(exit) {
-		if (!BackgroundThread) {
-			allowStopTheWorld();
+		version(Symgc_pthread_hook) {
+			if (!BackgroundThread) {
+				allowStopTheWorld();
+			}
 		}
 
 		exitBusyState();
