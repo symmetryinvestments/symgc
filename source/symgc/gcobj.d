@@ -41,10 +41,13 @@ enum TYPEINFO_IN_BLOCK = cast(void*)1;
 
 void initSDCThread(ThreadBase t) nothrow @nogc
 {
-	import d.gc.thread;
-	// TODO: see if this can be correctly marked
-	// createThread!false();
-	(cast(void function() nothrow @nogc)&createThread!false)();
+	// if we are using the pthread hook, this is already done by the pthread hook.
+	version(Symgc_pthread_hook) {} else {
+		import d.gc.thread;
+		// TODO: see if this can be correctly marked
+		// createThread!false();
+		(cast(void function() nothrow @nogc)&createThread!false)();
+	}
 
 	// set up the thread to point at our thread cache;
 	import d.gc.tcache;

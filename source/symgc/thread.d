@@ -36,11 +36,11 @@ bool createGCThread(TSR)(ThreadHandle* thread, TSR start_routine, void* arg) {
 			import core.sys.posix.pthread : start_thread = pthread_create;
 		}
 		auto ret = start_thread(
-			thread, null, cast(OSThreadRoutine) runner.getFunction!false(), runner);
+			thread, null, cast(OSThreadRoutine) runner.getFunction!true(), runner);
 		return ret == 0;
 	} else version(Windows) {
 		import core.sys.windows.winbase : LPTHREAD_START_ROUTINE, CreateThread, INVALID_HANDLE_VALUE;
-		*thread = _beginthreadex(null, 0, cast(LPTHREAD_START_ROUTINE) runner.getFunction!false(), runner, 0, null);
+		*thread = _beginthreadex(null, 0, cast(LPTHREAD_START_ROUTINE) runner.getFunction!true(), runner, 0, null);
 		return *thread != INVALID_HANDLE_VALUE;
 	}
 }
@@ -67,9 +67,9 @@ struct ThreadRunner(TSR) {
 	void* arg;
 	TSR fun;
 
-	static getFunction(bool AllowStopTheWorld)()
+	static getFunction(bool BackgroundThread)()
 	{
-		return &runThread!(AllowStopTheWorld, typeof(this));
+		return &runThread!(BackgroundThread, typeof(this));
 	}
 }
 
@@ -84,7 +84,7 @@ ThreadRunner!TSR* allocThreadRunner(TSR)(TSR fun, void* arg) {
 
 extern(C) void _d_print_throwable(Throwable t);
 
-extern(C) auto runThread(bool AllowStopTheWorld, TRunner)(TRunner* runner) {
+extern(C) auto runThread(bool BackgroundThread, TRunner)(TRunner* runner) {
 	import d.gc.capi : __sd_gc_free;
 	import d.gc.thread : createThread, destroyThread;
 
@@ -92,7 +92,7 @@ extern(C) auto runThread(bool AllowStopTheWorld, TRunner)(TRunner* runner) {
 	auto arg = runner.arg;
 
 	try {
-		createThread!AllowStopTheWorld();
+		createThread!BackgroundThread();
 		__sd_gc_free(runner);
 
 		// Make sure we clean up after ourselves.

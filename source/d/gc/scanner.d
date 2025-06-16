@@ -29,6 +29,7 @@ private struct ScanningList {
 		void initialize() {
 			_spinlock = SpinLock(SpinLock.Contention.brief);
 			workReadyEvent.initialize(true, false);
+			this.activeThreads = 1;
 		}
 
 		void addToWorkList(WorkItem[] items) shared {
@@ -42,6 +43,15 @@ private struct ScanningList {
 
 		// Note: SpinLock does not provide this information, even though it could.
 		bool mutexIsHeld() => true;
+
+		void scanThreadStarted() shared {
+			auto w = (cast(ScanningList*) &this);
+
+			_spinlock.lock();
+			scope(exit) _spinlock.unlock();
+
+			++w.activeThreads;
+		}
 
 		uint waitForWork(ref WorkItem[MaxRefill] refill) shared {
 			_spinlock.lock();
@@ -58,10 +68,9 @@ private struct ScanningList {
 			* of active thread is 0, then we know no more work is coming
 			* and we should stop.
 			*/
-			while(w.cursor == 0 && w.activeThreads > 0) {
+			while(!w.hasWork()) {
 				w.workReadyEvent.reset();
 				_spinlock.unlock();
-				import core.time;
 				w.workReadyEvent.wait();
 				_spinlock.lock();
 			}
@@ -105,11 +114,7 @@ private struct ScanningList {
 		import d.sync.mutex;
 		Mutex _mutex;
 		void initialize() {
-			// no-op
-		}
-
-		auto hasWork() {
-			return cursor != 0 || activeThreads == 0;
+			this.activeThreads = 1;
 		}
 
 		bool mutexIsHeld() => _mutex.isHeld();
@@ -119,6 +124,16 @@ private struct ScanningList {
 			scope(exit) _mutex.unlock();
 
 			(cast(ScanningList*) &this).addToWorkListImpl(items);
+		}
+
+		void scanThreadStarted() shared {
+			auto w = (cast(ScanningList*) &this);
+
+			_mutex.lock();
+			scope(exit) _mutex.unlock();
+
+			// ready to receive scan work.
+			++w.activeThreads;
 		}
 
 		uint waitForWork(ref WorkItem[MaxRefill] refill) shared {
@@ -166,6 +181,10 @@ private struct ScanningList {
 			w.cursor = top - count;
 			return count;
 		}
+	}
+
+	auto hasWork() {
+		return cursor != 0 || activeThreads == 0;
 	}
 
 	void ensureWorklistCapacity(size_t count) {
@@ -219,26 +238,12 @@ struct Scanner {
 private:
 	ScanningList work;
 
-
 	ubyte _gcCycle;
 	AddressRange _managedAddressSpace;
 
 public:
-	this(uint threadCount, ubyte gcCycle, AddressRange managedAddressSpace) {
-		if (threadCount == 0) {
-			import d.gc.cpu;
-			threadCount = getCoreCount();
-			assert(threadCount >= 1, "Expected at least one thread!");
-		}
-
-		work.activeThreads = threadCount;
-
+	this(ubyte gcCycle) {
 		this._gcCycle = gcCycle;
-		this._managedAddressSpace = managedAddressSpace;
-	}
-
-	this(ubyte gcCycle, AddressRange managedAddressSpace) {
-		this(0, gcCycle, managedAddressSpace);
 	}
 
 	@property
@@ -251,47 +256,49 @@ public:
 		return (cast(Scanner*) &this)._gcCycle;
 	}
 
-	void mark() shared {
-		(cast(Scanner*)&this).work.initialize();
-		import symgc.thread;
-		auto threadCount = work.activeThreads - 1;
-		import core.stdc.stdlib : alloca;
-		auto threadsPtr =
-			cast(ThreadHandle*) alloca(ThreadHandle.sizeof * threadCount);
-		auto threads = threadsPtr[0 .. threadCount];
-
+	private import symgc.thread;
+	void startThreads(ThreadHandle[] threads) {
+		work.initialize();
 		static void markThreadEntry(void* ctx) {
 			import d.gc.tcache;
 			threadCache.activateGC(false);
 
-			(cast(shared(Scanner*)) ctx).runMark();
+			auto scanner = cast(shared(Scanner)*) ctx;
+			// Deferring becoming active until the thread is fully started
+			// allows the scan to complete if this thread couldn't start (which
+			// can happen in the case of a race between the thread starting and
+			// a paused thread holding a critical lock needed to start
+			// threads).
+			scanner.work.scanThreadStarted();
+			scanner.runMark();
 		}
 
-		// First thing, start the worker threads, so they can do work ASAP.
 		foreach (ref tid; threads) {
 			createGCThread(&tid, &markThreadEntry, cast(void*) &this);
 		}
+	}
+
+	void joinThreads(ThreadHandle[] threads) shared {
+		foreach (tid; threads) {
+			joinGCThread(tid);
+		}
+
+		work.cleanup();
+	}
+
+	void mark(AddressRange managedSpace) shared {
+		this._managedAddressSpace = managedSpace;
 
 		// Scan the roots.
 		// TODO: this cast is awful, see if we can fix this.
 		__sd_gc_global_scan(cast(void delegate(const(void*)[]))&processGlobal);
 
 		// Now send this thread marking!
-		runMark();
-
-		work.cleanup();
-
-		foreach (tid; threads) {
-			joinGCThread(tid);
-		}
+		runMarkFromMainThread();
 	}
 
 	void addToWorkList(WorkItem item) shared {
 		work.addToWorkList((&item)[0 .. 1]);
-	}
-
-	void addToWorkList(WorkItem[] items) shared {
-		work.addToWorkList(items);
 	}
 
 	void processGlobal(const(void*)[] range) shared {
@@ -319,9 +326,20 @@ public:
 	}
 
 private:
+
+	void runMarkFromMainThread() shared {
+		auto worker = Worker(&this);
+		import d.gc.thread;
+		threadScan(&worker.scan);
+
+		runMarkImpl(worker);
+	}
 	void runMark() shared {
 		auto worker = Worker(&this);
+		runMarkImpl(worker);
+	}
 
+	void runMarkImpl(ref Worker worker) shared {
 		/**
 		 * Scan the stack and TLS.
 		 *
@@ -335,13 +353,20 @@ private:
 		 * and corrupting the internal of the standard C library.
 		 *
 		 * This is NOT good! So we scan here to make sure we don't miss anything.
+		 *
+		 * Note: this is only relevant if the C malloc calls are replaced with the
+		 * GC allocation calls which is not a thing we can do universally. Since
+		 * this prospect is dicey, there is no reason to do this, and this allows
+		 * us to avoid an extra startup sync.
 		 */
-		import d.gc.thread;
-		threadScan(&worker.scan);
+		// import d.gc.thread;
+		// threadScan(&worker.scan);
 
 		WorkItem[ScanningList.MaxRefill] refill;
+		auto count = work.waitForWork(refill);
+		// had to wait until now to be sure the managed address space is correct
+		worker.managedAddressSpace = managedAddressSpace;
 		while (true) {
-			auto count = work.waitForWork(refill);
 			if (count == 0) {
 				// We are done, there is no more work items.
 				return;
@@ -350,6 +375,7 @@ private:
 			foreach (i; 0 .. count) {
 				worker.scan(refill[i]);
 			}
+			count = work.waitForWork(refill);
 		}
 	}
 }
@@ -470,7 +496,7 @@ public:
 						continue;
 					}
 
-					scanner.addToWorkList(worklist[0 .. WorkListCapacity]);
+					scanner.work.addToWorkList(worklist[0 .. WorkListCapacity]);
 
 					cursor = 1;
 					worklist[0] = i;
