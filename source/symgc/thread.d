@@ -19,12 +19,15 @@ version(Windows) {
 
 import d.gc.thread;
 
+bool createGCThread(TSR)(ThreadHandle* thread, TSR start_routine, void* arg) {
+	auto runner = allocThreadRunner(start_routine, arg);
+	return createGCThread(thread, runner);
+}
+
 /**
  * Create a GC thread that does not prevent stop the world (or block waiting for world stopping to finish)
  */
-bool createGCThread(TSR)(ThreadHandle* thread, TSR start_routine, void* arg) {
-	auto runner = allocThreadRunner(start_routine, arg);
-
+bool createGCThread(TSR)(ThreadHandle* thread, ThreadRunner!TSR*  runner) {
 	version(linux) {
 		alias OSThreadRoutine = extern(C) void* function(void*);
 		version(Symgc_pthread_hook) {
@@ -61,8 +64,6 @@ void joinGCThread(ThreadHandle tid) {
 	}
 }
 
-package:
-
 struct ThreadRunner(TSR) {
 	void* arg;
 	TSR fun;
@@ -72,6 +73,8 @@ struct ThreadRunner(TSR) {
 		return &runThread!(BackgroundThread, typeof(this));
 	}
 }
+
+package:
 
 ThreadRunner!TSR* allocThreadRunner(TSR)(TSR fun, void* arg) {
 	alias TRType = ThreadRunner!TSR;
@@ -93,7 +96,7 @@ extern(C) auto runThread(bool BackgroundThread, TRunner)(TRunner* runner) {
 
 	try {
 		createThread!BackgroundThread();
-		__sd_gc_free(runner);
+		static if(!BackgroundThread) __sd_gc_free(runner);
 
 		// Make sure we clean up after ourselves.
 		scope(exit) destroyThread();

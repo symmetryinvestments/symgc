@@ -80,6 +80,7 @@ private:
 	size_t nextGCRun;
 	bool enableGC;
 	bool runningFinalization;
+	bool isScanningThread;
 
 	int nextGCRunClassOffset;
 	uint consecutiveSuccessfulGCRuns;
@@ -105,6 +106,10 @@ public:
 
 		initialize(&gExtentMap, &gBase);
 		return true;
+	}
+
+	void setIsScanningThread() {
+		isScanningThread = true;
 	}
 
 	@property
@@ -420,6 +425,7 @@ private:
 
 	void* allocSmallBin(ubyte sizeClass, uint slotSize, bool containsPointers) {
 		assert(slotSize == binInfos[sizeClass].slotSize, "Invalid slot size!");
+		assert(!isScanningThread, "Trying to free while in scanning thread!");
 
 		ensureThreadCacheIsInitialized();
 
@@ -458,6 +464,8 @@ private:
 
 	void freeSmall(PageDescriptor pd, void* ptr) {
 		assert(pd.isSlab(), "Slab expected!");
+		assert(!isScanningThread, "Trying to allocate while in scanning thread!");
+
 
 		auto ec = pd.extentClass;
 		auto sc = ec.sizeClass;
@@ -496,6 +504,7 @@ private:
 	 * Large allocations.
 	 */
 	void* allocLarge(uint pages, bool containsPointers, bool zero) {
+		assert(!isScanningThread, "Trying to allocate while in scanning thread!");
 		ensureThreadCacheIsInitialized();
 
 		// We are about to allocate, make room for it if needed.
@@ -521,6 +530,7 @@ private:
 
 	void freeLarge(PageDescriptor pd) {
 		assert(!pd.isSlab(), "Slab are not supported!");
+		assert(!isScanningThread, "Trying to free while in scanning thread!");
 
 		auto e = pd.extent;
 		auto npages = e.npages;
