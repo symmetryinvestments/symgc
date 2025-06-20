@@ -427,6 +427,12 @@ final class SnazzyGC : GC
 			t.tlsGCData = null;
 		}
 	}
+
+	~this() {
+		// clean up any lingering GC threads.
+		import d.gc.scanner;
+		cleanupGCThreads();
+	}
 }
 
 // HELPER FUNCTIONS

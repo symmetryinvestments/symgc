@@ -117,6 +117,7 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 			tc.sendSuspendSignal();
 
 			if (core_thread_osthread_suspend(t)) {
+				tc.checkLockWaiting();
 				if (tc.onSuspendSignal()) {
 					tc.markSuspended();
 					++suspended;
@@ -214,6 +215,7 @@ bool resumeDruntimeThreads(ref uint suspended) {
 			if (ss != SuspendState.Suspended)
 				continue;
 
+			tc.resolveLockWaiting();
 			tc.sendResumeSignal();
 			tc.onResumeSignal();
 		}

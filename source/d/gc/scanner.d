@@ -8,13 +8,30 @@ import d.gc.range;
 import d.gc.slab;
 import d.gc.spec;
 import d.gc.util;
+import d.gc.tcache;
 
-private struct ScanningList {
+void startGCThreads(uint nThreads) {
+	(cast(Scanner*)&gScanner).startThreads(nThreads);
+}
+
+void cleanupGCThreads() {
+	(cast(Scanner*)&gScanner).joinThreads();
+}
+
+void markGC(ubyte gcCycle, AddressRange managedSpace) {
+	gScanner.mark(gcCycle, managedSpace);
+}
+
+private:
+struct ScanningList {
 	@disable this(this);
 	WorkItem[] worklist;
-	uint activeThreads;
+	int activeThreads;
 	uint cursor;
 	enum MaxRefill = 4;
+	// we want to use the main thread's tcache when reallocating to avoid populating
+	// the threadcache of all the scanning threads with stuff.
+	ThreadCache* threadCache;
 
 	version(Windows) {
 		// The windows implementation uses a similar mechanism to the druntime GC,
@@ -25,11 +42,13 @@ private struct ScanningList {
 
 		shared SpinLock _spinlock;
 		Event workReadyEvent;
+		Event gcStartedEvent;
 
 		void initialize() {
+			this.threadCache = &.threadCache;
 			_spinlock = SpinLock(SpinLock.Contention.brief);
 			workReadyEvent.initialize(true, false);
-			this.activeThreads = 1;
+			gcStartedEvent.initialize(true, false);
 		}
 
 		void addToWorkList(WorkItem[] items) shared {
@@ -39,18 +58,58 @@ private struct ScanningList {
 			(cast(ScanningList*) &this).addToWorkListImpl(items);
 
 			(cast(Event*)&workReadyEvent).setIfInitialized();
+			(cast(Event*)&gcStartedEvent).setIfInitialized();
 		}
 
 		// Note: SpinLock does not provide this information, even though it could.
 		bool mutexIsHeld() => true;
 
-		void scanThreadStarted() shared {
+		void mainThreadStarted() shared {
 			auto w = (cast(ScanningList*) &this);
 
 			_spinlock.lock();
 			scope(exit) _spinlock.unlock();
 
 			++w.activeThreads;
+		}
+
+		void stopScanningThreads() shared {
+			auto w = (cast(ScanningList*) &this);
+
+			_spinlock.lock();
+			scope(exit) _spinlock.unlock();
+
+			// need to make the active threads go to -1
+			--w.activeThreads;
+			(cast(Event*)&gcStartedEvent).setIfInitialized();
+		}
+
+		bool waitForGCStart() shared {
+			_spinlock.lock();
+			scope(exit) _spinlock.unlock();
+
+			auto w = (cast(ScanningList*) &this);
+
+			/**
+			* We wait for work to be present in the worklist or the
+			* active threads to be negative (meaning the scanning thread should exit)
+			*/
+			while(!w.hasStarted()) {
+				w.gcStartedEvent.reset();
+				_spinlock.unlock();
+				w.gcStartedEvent.wait();
+				_spinlock.lock();
+			}
+
+			if (w.activeThreads == -1) {
+				// trying to stop GC threads. Wake up anyone else who is waiting.
+				w.gcStartedEvent.setIfInitialized();
+				return false;
+			}
+
+			// this thread now active
+			++w.activeThreads;
+			return true;
 		}
 
 		uint waitForWork(ref WorkItem[MaxRefill] refill) shared {
@@ -114,7 +173,7 @@ private struct ScanningList {
 		import d.sync.mutex;
 		Mutex _mutex;
 		void initialize() {
-			this.activeThreads = 1;
+			this.threadCache = &.threadCache;
 		}
 
 		bool mutexIsHeld() => _mutex.isHeld();
@@ -126,7 +185,7 @@ private struct ScanningList {
 			(cast(ScanningList*) &this).addToWorkListImpl(items);
 		}
 
-		void scanThreadStarted() shared {
+		void mainThreadStarted() shared {
 			auto w = (cast(ScanningList*) &this);
 
 			_mutex.lock();
@@ -134,6 +193,33 @@ private struct ScanningList {
 
 			// ready to receive scan work.
 			++w.activeThreads;
+		}
+
+		void stopScanningThreads() shared {
+			auto w = (cast(ScanningList*) &this);
+
+			_mutex.lock();
+			scope(exit) _mutex.unlock();
+
+			// need to make the active threads go to -1
+			--w.activeThreads;
+		}
+
+		bool waitForGCStart() shared {
+			_mutex.lock();
+			scope(exit) _mutex.unlock();
+
+			auto w = (cast(ScanningList*) &this);
+			_mutex.waitFor(&w.hasStarted);
+
+			if(w.activeThreads == -1) {
+				// exiting GC threads
+				return false;
+			}
+
+			// this thread is now active
+			++w.activeThreads;
+			return true;
 		}
 
 		uint waitForWork(ref WorkItem[MaxRefill] refill) shared {
@@ -183,13 +269,26 @@ private struct ScanningList {
 		}
 	}
 
+	void startGCScan() shared {
+		// note, we don't take the lock here, because there should be no work before a scan starts, and there should be no work when a scan ends.
+		assert(cursor == 0, "starting a GC scan, but still data to scan!");
+		this.threadCache = cast(shared)&.threadCache;
+
+		mainThreadStarted(); // indicate the main thread is participating.
+	}
+
+	auto hasStarted() {
+		return cursor != 0 || activeThreads < 0;
+	}
+
 	auto hasWork() {
-		return cursor != 0 || activeThreads == 0;
+		return cursor != 0 || activeThreads <= 0;
 	}
 
 	void ensureWorklistCapacity(size_t count) {
 		assert(mutexIsHeld(), "mutex not held!");
 		assert(count < uint.max, "Cannot reserve this much capacity!");
+		assert(threadCache !is null, "threadCache is null!");
 
 		if (likely(count <= worklist.length)) {
 			return;
@@ -205,7 +304,6 @@ private struct ScanningList {
 			size = getAllocSize(count * WorkItem.sizeof);
 		}
 
-		import d.gc.tcache;
 		auto ptr = threadCache.realloc(worklist.ptr, size, false);
 		worklist = (cast(WorkItem*) ptr)[0 .. size / WorkItem.sizeof];
 	}
@@ -227,10 +325,10 @@ private struct ScanningList {
 		assert(activeThreads == 0, "Still running threads!");
 
 		// We now done, we can free the worklist.
-		import d.gc.tcache;
-		threadCache.free(cast(void*) worklist.ptr);
+		(cast(ThreadCache*)threadCache).free(cast(void*) worklist.ptr);
 
 		worklist = null;
+		threadCache = null;
 	}
 }
 
@@ -241,10 +339,9 @@ private:
 	ubyte _gcCycle;
 	AddressRange _managedAddressSpace;
 
+	ThreadHandle[] threads;
+
 public:
-	this(ubyte gcCycle) {
-		this._gcCycle = gcCycle;
-	}
 
 	@property
 	AddressRange managedAddressSpace() shared {
@@ -257,37 +354,68 @@ public:
 	}
 
 	private import symgc.thread;
-	void startThreads(ThreadHandle[] threads) {
+	void startThreads(uint nThreads) {
+		if (threads.length != 0) {
+			// threads already running.
+			return;
+		}
+
+		threads = (cast(ThreadHandle*)threadCache.alloc(ThreadHandle.sizeof * nThreads, false, false))[0 .. nThreads];
+
 		work.initialize();
 		static void markThreadEntry(void* ctx) {
 			import d.gc.tcache;
 			threadCache.activateGC(false);
 
+			// Set a flag saying we should not be using our local thread cache.
+			// The only allocations/free we should be doing is to resize the work list.
+			// Note that scanning threads DO NOT have their stack or TLS scanned,
+			// so we can't put any pointers in there that will become garbage.
+			threadCache.setIsScanningThread();
+
 			auto scanner = cast(shared(Scanner)*) ctx;
-			// Deferring becoming active until the thread is fully started
-			// allows the scan to complete if this thread couldn't start (which
-			// can happen in the case of a race between the thread starting and
-			// a paused thread holding a critical lock needed to start
-			// threads).
-			scanner.work.scanThreadStarted();
-			scanner.runMark();
+
+			while(scanner.work.waitForGCStart()) {
+				scanner.runMarkFromScanThread();
+			}
 		}
 
+		// we use a static ThreadRunner because bad things happen if this memory
+		// gets collected before the thread can start.
+		static ThreadRunner!(typeof(&markThreadEntry)) staticRunner;
+
+		// allocate an array to hold the threads.
+		staticRunner.fun = &markThreadEntry;
+		staticRunner.arg = cast(void*) &this;
 		foreach (ref tid; threads) {
-			createGCThread(&tid, &markThreadEntry, cast(void*) &this);
+			createGCThread(&tid, &staticRunner);
 		}
 	}
 
-	void joinThreads(ThreadHandle[] threads) shared {
-		foreach (tid; threads) {
-			joinGCThread(tid);
+	void joinThreads() {
+
+		if (threads.length > 0) {
+			(cast(shared ScanningList*)&work).stopScanningThreads();
+			foreach (tid; threads) {
+				joinGCThread(tid);
+			}
+
+			// free the thread array
+			threadCache.free(threads.ptr);
+			threads = null;
 		}
 
-		work.cleanup();
+		// destroy the work object, it might have OS resources allocated for it.
+		destroy(work);
 	}
 
-	void mark(AddressRange managedSpace) shared {
+	void mark(ubyte gcCycle, AddressRange managedSpace) shared {
+		// set up the address space and the gc cycle. These change every mark phase.
 		this._managedAddressSpace = managedSpace;
+		this._gcCycle = gcCycle;
+
+		// start the GC
+		work.startGCScan();
 
 		// Scan the roots.
 		// TODO: this cast is awful, see if we can fix this.
@@ -295,6 +423,9 @@ public:
 
 		// Now send this thread marking!
 		runMarkFromMainThread();
+
+		// all work is done, clean up the work list.
+		work.cleanup();
 	}
 
 	void addToWorkList(WorkItem item) shared {
@@ -328,18 +459,14 @@ public:
 private:
 
 	void runMarkFromMainThread() shared {
-		auto worker = Worker(&this);
-		import d.gc.thread;
-		threadScan(&worker.scan);
-
-		runMarkImpl(worker);
-	}
-	void runMark() shared {
-		auto worker = Worker(&this);
-		runMarkImpl(worker);
+		runMarkImpl!true();
 	}
 
-	void runMarkImpl(ref Worker worker) shared {
+	void runMarkFromScanThread() shared {
+		runMarkImpl!false();
+	}
+
+	void runMarkImpl(bool mainThread)() shared {
 		/**
 		 * Scan the stack and TLS.
 		 *
@@ -362,25 +489,32 @@ private:
 		// import d.gc.thread;
 		// threadScan(&worker.scan);
 
+		auto worker = Worker(&this);
+
+		static if(mainThread) {
+			// on the main thread, scan the stack and TLS of the thread.
+			worker.setScanParameters();
+			import d.gc.thread;
+			threadScan(&worker.scan);
+		}
+
 		WorkItem[ScanningList.MaxRefill] refill;
-		auto count = work.waitForWork(refill);
-		// had to wait until now to be sure the managed address space is correct
-		worker.managedAddressSpace = managedAddressSpace;
+
 		while (true) {
+			auto count = work.waitForWork(refill);
 			if (count == 0) {
 				// We are done, there is no more work items.
 				return;
 			}
+			// wait until we get work to set the scan parameters (gc cycle and address range).
+			worker.setScanParameters();
 
 			foreach (i; 0 .. count) {
 				worker.scan(refill[i]);
 			}
-			count = work.waitForWork(refill);
 		}
 	}
 }
-
-private:
 
 struct LastDenseSlabCache {
 	AddressRange slab;
@@ -417,7 +551,10 @@ public:
 
 		import d.gc.tcache;
 		this.emap = threadCache.emap;
+	}
 
+	void setScanParameters() {
+		// set up the scan parameters for this batch of scanning.
 		this.managedAddressSpace = scanner.managedAddressSpace;
 		this.gcCycle = scanner.gcCycle;
 	}
@@ -676,6 +813,8 @@ public:
 		return WorkItem(range[0 .. WorkUnit]);
 	}
 }
+
+shared Scanner gScanner;
 
 @"WorkItem" unittest {
 	void* stackPtr;

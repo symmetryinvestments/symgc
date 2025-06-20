@@ -44,7 +44,6 @@ private:
 
 		// set up the scanner
 		import d.gc.scanner;
-		auto scanner = Scanner(gcCycle);
 
 		// start the threads
 		auto threadCount = gCollectorState.scanningThreads;
@@ -56,8 +55,7 @@ private:
 
 		import symgc.thread;
 		auto nScanningThreads = threadCount - 1;
-		auto threads = (cast(ThreadHandle*)threadCache.alloc(ThreadHandle.sizeof * nScanningThreads, false, false))[0 .. nScanningThreads];
-		scanner.startThreads(threads);
+		startGCThreads(nScanningThreads);
 
 		import d.gc.thread;
 		stopTheWorld();
@@ -72,14 +70,9 @@ private:
 		prepareGCCycle();
 
 		// Go on and on until all worklists are empty.
-		(cast(shared(Scanner*))&scanner).mark(managedAddressSpace);
+		markGC(gcCycle, managedAddressSpace);
 
 		restartTheWorld();
-
-		(cast(shared(Scanner*))&scanner).joinThreads(threads);
-
-		// clean up the thread list pointer
-		threadCache.free(threads.ptr);
 
 		/**
 		 * We might have allocated, and therefore refilled the bin

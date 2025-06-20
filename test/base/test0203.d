@@ -59,9 +59,25 @@ void allocateItem(T)() {
 
 extern(C) void pthread_create();
 
+version(WindowsDebug) {
+	extern(Windows) long SegfaultHandler(void* ptr) {
+		// let's see if stdio works
+		import core.stdc.stdio;
+		printf("dead!\n");
+		while(true) {
+			import core.thread;
+			import core.time;
+			Thread.sleep(1.seconds);
+		}
+	}
+
+	extern(Windows) void *AddVectoredExceptionHandler(ulong first, typeof(&SegfaultHandler) Handler);
+}
+
 void main() {
 	// this is needed to engage the pthread hook...
 	version(linux) auto pth = &pthread_create;
+	version(WindowsDebug) assert(AddVectoredExceptionHandler(1, &SegfaultHandler));
 	import d.gc.thread;
 	createProcess();
 	static struct ThreadRunner {
