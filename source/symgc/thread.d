@@ -4,15 +4,17 @@ version(Windows) {
 	import core.sys.windows.winnt : HANDLE;
 	import core.sys.windows.windef : DWORD;
 	import core.sys.windows.winbase;
-	alias currentThreadHandle = GetCurrentThread;
+	alias currentThreadId = GetCurrentThreadId;
 	alias sched_yield = SwitchToThread;
 	alias ThreadHandle = HANDLE;
+	alias ThreadId = DWORD;
 	private enum THREAD_RETURN_VALUE = DWORD(0);
 	extern (C) ThreadHandle _beginthreadex(void*, uint, LPTHREAD_START_ROUTINE, void*, uint, uint*) nothrow @nogc;
 } else version(linux) {
 	import core.sys.posix.pthread : pthread_t, pthread_self;
 	alias ThreadHandle = pthread_t;
-	alias currentThreadHandle = pthread_self;
+	alias ThreadId = pthread_t;
+	alias currentThreadId = pthread_self;
 	public import core.sys.posix.sched: sched_yield;
 	private enum THREAD_RETURN_VALUE = null;
 }

@@ -61,8 +61,11 @@ private:
 	package ThreadState state;
 
 	import symgc.thread;
-	package ThreadHandle self;
-
+	package ThreadId self;
+	version(Windows) {
+		import core.sys.windows.winbase;
+ 		private ThreadHandle suspendHandle = INVALID_HANDLE_VALUE;
+	}
 	version(linux) {
 		import core.sys.posix.sys.types;
 		package pid_t tid;
@@ -93,6 +96,11 @@ private:
 	ubyte nextBinToRecycle;
 
 	ThreadBinState[ThreadBinCount] binStates;
+
+	version(Windows) {
+		import d.sync.waiter;
+		shared(Waiter)* waiter;
+	}
 
 public:
 	bool isInitialized() {
@@ -127,17 +135,53 @@ public:
 
 	auto clearProbationState() => state.clearProbationState();
 
+	version(Windows) {
+		void checkLockWaiting() {
+			// If there is a waiter registered, check if it's busy. If it's busy, then we are going to do a weird busy state switcheroo.
+			if(waiter is null) {
+				return;
+			}
+
+			// If the waiter says that it is in the middle of a wait, then we can't leave the thread suspended. On resuming the world, this thread should be resuspended so the call to resume will be valid.
+			if(waiter.setGCBusy()) {
+				// TODO: maybe it would be nice to be able to get this handle from Thread itself.
+				import core.sys.windows.winbase;
+				import core.sys.windows.winnt;
+				// need to convert thread id into a handle, and then suspend it.
+				suspendHandle = OpenThread(THREAD_ALL_ACCESS, false, this.self);
+				assert(suspendHandle != INVALID_HANDLE_VALUE);
+				ResumeThread(suspendHandle);
+			}
+		}
+
+		void resolveLockWaiting() {
+			if(waiter is null) {
+				return;
+			}
+			import core.sys.windows.winbase;
+			import core.sys.windows.winnt;
+			waiter.clearGCBusy();
+			if (suspendHandle != INVALID_HANDLE_VALUE) {
+				import core.sys.windows.winbase;
+				auto ret = SuspendThread(suspendHandle);
+				assert(ret != 0xFFFFFFFF, "Unable to resuspend thread!");
+				CloseHandle(suspendHandle);
+				suspendHandle = INVALID_HANDLE_VALUE;
+			}
+		}
+	}
+
 	void initialize(shared(ExtentMap)* emap, shared(Base)* base) {
 		this.emap = CachedExtentMap(emap, base);
 
 		// Make sure initialize can be called multiple
 		// times on the same thread cache.
 		if (isInitialized()) {
-			assert(self == currentThreadHandle(), "Invalid current thread handle!");
+			assert(self == currentThreadId(), "Invalid current thread handle!");
 			return;
 		}
 
-		self = currentThreadHandle();
+		self = currentThreadId();
 
 		/**
 		 * You'd think linux would provide a way to get the tid from
@@ -168,6 +212,12 @@ public:
 		// In order to avoid this, we force the thread to
 		// pick an arena at initialization time.
 		reassociateArena(true);
+
+		version(Windows) {
+			// hack to avoid pausing on WaitOnAddress.
+			import d.sync.mutex;
+			this.waiter = Mutex.getWaiterAddress();
+		}
 
 		// Because this may allocate, we do it last.
 		import symgc.rt;

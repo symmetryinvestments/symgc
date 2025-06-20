@@ -95,6 +95,11 @@ public:
 		word.store(0);
 	}
 
+	version(Windows) static shared(Waiter)* getWaiterAddress() {
+		// hack, return address to the waiter.
+		return &threadData.waiter;
+	}
+
 private:
 	enum Handoff {
 		None,

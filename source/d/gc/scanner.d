@@ -173,7 +173,7 @@ struct ScanningList {
 		import d.sync.mutex;
 		Mutex _mutex;
 		void initialize() {
-			this.activeThreads = 1;
+			this.threadCache = &.threadCache;
 		}
 
 		bool mutexIsHeld() => _mutex.isHeld();
@@ -185,7 +185,7 @@ struct ScanningList {
 			(cast(ScanningList*) &this).addToWorkListImpl(items);
 		}
 
-		void scanThreadStarted() shared {
+		void mainThreadStarted() shared {
 			auto w = (cast(ScanningList*) &this);
 
 			_mutex.lock();
@@ -193,6 +193,33 @@ struct ScanningList {
 
 			// ready to receive scan work.
 			++w.activeThreads;
+		}
+
+		void stopScanningThreads() shared {
+			auto w = (cast(ScanningList*) &this);
+
+			_mutex.lock();
+			scope(exit) _mutex.unlock();
+
+			// need to make the active threads go to -1
+			--w.activeThreads;
+		}
+
+		bool waitForGCStart() shared {
+			_mutex.lock();
+			scope(exit) _mutex.unlock();
+
+			auto w = (cast(ScanningList*) &this);
+			_mutex.waitFor(&w.hasStarted);
+
+			if(w.activeThreads == -1) {
+				// exiting GC threads
+				return false;
+			}
+
+			// this thread is now active
+			++w.activeThreads;
+			return true;
 		}
 
 		uint waitForWork(ref WorkItem[MaxRefill] refill) shared {

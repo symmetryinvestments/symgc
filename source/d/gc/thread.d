@@ -124,22 +124,33 @@ void suspendThreadDelayed(d.gc.tstate.ThreadState* tstate) {
 	}
 }
 
-void delayedThreadInc() {
-	gThreadState.delayedThreadInc();
-}
+version(Windows) {
+	void delayedThreadInc() {
+		gThreadState.delayedThreadInc();
+	}
 
-void waitForDelayedThreads() {
-	gThreadState.waitForDelayedThreads();
+	void waitForDelayedThreads() {
+		gThreadState.waitForDelayedThreads();
+	}
+
+	void waitForGCBusy() {
+		gThreadState.waitForGCBusy();
+	}
 }
 
 version(Symgc_testing) {
 	void simulateStopTheWorld() {
 		gThreadState.stopTheWorldLock.exclusiveLock();
-		gThreadState.delayedSuspendLock.exclusiveLock();
+		version(Windows) {
+			ThreadState.gcBusyEvent.initialize(true, false);
+			ThreadState.gcBusyEvent.reset();
+		}
 	}
 
 	void simulateResumeTheWorld() {
-		gThreadState.delayedSuspendLock.exclusiveUnlock();
+		version(Windows) {
+			ThreadState.gcBusyEvent.setIfInitialized();
+		}
 		gThreadState.stopTheWorldLock.exclusiveUnlock();
 	}
 }
@@ -180,21 +191,17 @@ private:
 
 	uint registeredThreadCount = 0;
 	uint suspendedThreadCount = 0;
-	int delayedThreadCount = 0;
+	version(Windows) {
+		int delayedThreadCount;
+		import core.sync.event;
+		__gshared Event gcBusyEvent;
+	}
 
 	Mutex mThreadList;
 	ThreadRing registeredThreads;
 
 	import d.sync.sharedlock;
 	shared SharedLock stopTheWorldLock;
-
-	// delayed suspend lock is used to synchronize when the delayed suspend
-	// should continue on systems without signals. This is locked when
-	// suspending the world exclusively, and then unlocked when the delayed
-	// threads should continue.
-	// NOTE: we can probably merge STW lock and this lock once we remove
-	// support for the pthread hook.
-	shared SharedLock delayedSuspendLock;
 
 public:
 	/**
@@ -254,8 +261,10 @@ public:
 		// Prevent any new threads from being created
 		stopTheWorldLock.exclusiveLock();
 
-		// get ready for delayed threads that use the lock for synchronization.
-		delayedSuspendLock.exclusiveLock();
+		version(Windows) {
+			gcBusyEvent.initialize(true, false);
+			gcBusyEvent.reset();
+		}
 
 		uint count;
 
@@ -265,41 +274,45 @@ public:
 		}
 	}
 
-	void delayedThreadDec() shared {
-		mStats.lock();
-		scope(exit) mStats.unlock();
+	version(Windows) {
+		void delayedThreadDec() shared {
+			mStats.lock();
+			scope(exit) mStats.unlock();
 
-		*(cast(uint*)&this.delayedThreadCount) -= 1;
-	}
+			*(cast(uint*)&this.delayedThreadCount) -= 1;
+		}
 
-	void delayedThreadInc() shared {
-		mStats.lock();
-		scope(exit) mStats.unlock();
+		void delayedThreadInc() shared {
+			mStats.lock();
+			scope(exit) mStats.unlock();
 
-		*(cast(uint*)&this.delayedThreadCount) += 1;
-	}
+			*(cast(uint*)&this.delayedThreadCount) += 1;
+		}
 
-	void waitForDelayedThreads() shared {
-		mStats.lock();
-		scope(exit) mStats.unlock();
+		void waitForDelayedThreads() shared {
+			mStats.lock();
+			scope(exit) mStats.unlock();
 
-		mStats.waitFor(
-			&(cast(ThreadState*)&this).noDelayedThreads
-		);
-	}
+			mStats.waitFor(
+				&(cast(ThreadState*)&this).noDelayedThreads
+			);
+		}
 
-	bool noDelayedThreads() => delayedThreadCount == 0;
+		bool noDelayedThreads() => delayedThreadCount == 0;
 
-	void suspendThreadDelayedNoSignals(d.gc.tstate.ThreadState* tstate) shared {
-		// We are no longer delayed, can be suspended
-		delayedThreadDec();
+		void suspendThreadDelayedNoSignals(d.gc.tstate.ThreadState* tstate) shared {
+			// We are no longer delayed, can be suspended
+			delayedThreadDec();
 
-		// finally, lock the delayed shared lock, which will be held by the GC
-		// runner until we are allowed to restart.
-		delayedSuspendLock.sharedLock();
-		auto s = tstate.suspendState();
-		assert(s == SuspendState.Probation || s == SuspendState.None);
-		delayedSuspendLock.sharedUnlock();
+			// finally, wait on the gc busy event. This event will not trigger until after the GC is over.
+			waitForGCBusy();
+			auto s = tstate.suspendState();
+			assert(s == SuspendState.Probation || s == SuspendState.None);
+		}
+
+		void waitForGCBusy() shared {
+			gcBusyEvent.wait();
+		}
 	}
 
 	void restartTheWorld() shared {
@@ -310,7 +323,7 @@ public:
 
 		// allow any threads that have called suspendThreadDelayedNoSignals to
 		// continue.
-		delayedSuspendLock.exclusiveUnlock();
+		version(Windows) gcBusyEvent.setIfInitialized();
 	}
 
 	void clearWorldProbation() shared {

@@ -32,7 +32,7 @@ void randomAlloc() {
 	enum CollectCycle = 4 * 1024 * 1024;
 	size_t n = 11400714819323198485;
 	import symgc.thread;
-	n ^= cast(size_t) currentThreadHandle();
+	n ^= cast(size_t) currentThreadId();
 
 	foreach (_; 0 .. 8) {
 		foreach (i; 0 .. CollectCycle) {
