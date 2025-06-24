@@ -70,9 +70,7 @@ void destroyThread() {
 
 	threadCache.destroyThread();
 
-	version(Symgc_pthread_hook) {
-		gThreadState.remove(&threadCache);
-	}
+	gThreadState.remove(&threadCache);
 }
 
 void preventStopTheWorld() {
@@ -178,10 +176,7 @@ void initThread() {
 	threadCache.initialize(&gExtentMap, &gBase);
 	threadCache.activateGC();
 
-	version(Symgc_pthread_hook) {
-		import d.gc.global;
-		gThreadState.register(&threadCache);
-	}
+	gThreadState.register(&threadCache);
 }
 
 struct ThreadState {
@@ -362,7 +357,9 @@ private:
 			registeredThreadCount++;
 		}
 
-		registeredThreads.insert(tcache);
+		version(Symgc_pthread_hook) {
+			registeredThreads.insert(tcache);
+		}
 	}
 
 	void removeImpl(ThreadCache* tcache) {
@@ -374,7 +371,9 @@ private:
 			registeredThreadCount--;
 		}
 
-		registeredThreads.remove(tcache);
+		version(Symgc_pthread_hook) {
+			registeredThreads.remove(tcache);
+		}
 	}
 
 	version(Symgc_pthread_hook) {
