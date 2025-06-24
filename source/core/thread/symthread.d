@@ -117,9 +117,9 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 			tc.sendSuspendSignal();
 
 			if (core_thread_osthread_suspend(t)) {
-				tc.checkLockWaiting();
 				if (tc.onSuspendSignal()) {
 					tc.markSuspended();
+					tc.checkLockWaiting();
 					++suspended;
 					continue;
 				}
@@ -153,6 +153,7 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 					assert(0, "could not suspend thread");
 				}
 				tc.markSuspended();
+				tc.checkLockWaiting();
 				++suspended;
 			}
 		}
