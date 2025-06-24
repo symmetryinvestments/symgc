@@ -552,6 +552,10 @@ private:
 			mStats.lock();
 			scope(exit) mStats.unlock();
 
+			if(suspended > registeredThreadCount) {
+				// prevent saying we suspended more threads than we know about.
+				suspended = registeredThreadCount;
+			}
 			suspendedThreadCount = suspended;
 			return retry;
 		}
@@ -566,6 +570,10 @@ private:
 			mStats.lock();
 			scope(exit) mStats.unlock();
 
+			if(suspended > registeredThreadCount) {
+				// prevent saying we suspended more threads than we know about.
+				suspended = registeredThreadCount;
+			}
 			suspendedThreadCount = suspended;
 			return retry;
 		}
