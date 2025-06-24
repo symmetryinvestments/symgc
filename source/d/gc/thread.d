@@ -351,6 +351,7 @@ private:
 	void registerImpl(ThreadCache* tcache) {
 		assert(mThreadList.isHeld(), "Mutex not held!");
 
+		if(tcache.suspendState != SuspendState.Detached)
 		{
 			mStats.lock();
 			scope(exit) mStats.unlock();
@@ -365,6 +366,7 @@ private:
 	void removeImpl(ThreadCache* tcache) {
 		assert(mThreadList.isHeld(), "Mutex not held!");
 
+		if(tcache.suspendState != SuspendState.Detached)
 		{
 			mStats.lock();
 			scope(exit) mStats.unlock();
@@ -411,6 +413,10 @@ private:
 					import d.gc.proc;
 					if (isDetached(tc.tid)) {
 						tc.state.detach();
+						// remove this thread from the count of running threads
+						mStats.lock();
+						scope(exit) mStats.unlock();
+						--registeredThreadCount;
 						continue;
 					}
 				}
