@@ -6,10 +6,13 @@ The idea is to extract the GC portions of the SDC runtime (and everything needed
 
 ## Requirements
 
+### OS/Arch
 Intel/AMD 64-bit CPU.
 Linux or Windows (so far)
 
-DMD 2.111 or later
+### Compiler
+* DMD 2.111 -> Linux only, does not include features needed for Windows support.
+* DMD 2.112 (or unreleased master) or later. This is required for Windows support. It will also increase Linux performance.
 
 ## Progress so far
 
