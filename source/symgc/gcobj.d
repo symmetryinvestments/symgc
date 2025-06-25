@@ -122,7 +122,7 @@ private GC initializeQuiet()
 private GC initialize()
 {
 	import core.stdc.stdio;
-	printf("using SDC GC!\n");
+	printf("using SYM GC!\n");
 	return initializeQuiet();
 }
 
