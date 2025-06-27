@@ -7,80 +7,47 @@ The idea is to extract the GC portions of the SDC runtime (and everything needed
 ## Requirements
 
 ### OS/Arch
-Intel/AMD 64-bit CPU.
-Linux or Windows (so far)
+
+* Intel/AMD 64-bit CPU.
+* Linux or Windows (so far)
 
 ### Compiler
 * DMD 2.111 -> Linux only, does not include features needed for Windows support.
 * DMD 2.112 (or unreleased master) or later. This is required for Windows support. It will also increase Linux performance.
 
-## Progress so far
+## Using
 
-- d.sync is ported, uses core.atomic for building locks. Unittests passing.
-- d.gc modules are ported.
-- [X] allocclass.d
-- [X] arena.d
-- [X] base.d
-- [X] bin.d
-- [X] bitmap.d
-- [X] block.d
-- [X] capi.d
-- [X] collector.d
-- [X] cpu.d
-- [X] emap.d
-- [X] extent.d
-- [X] fork.d
-- [X] global.d
-- [X] heap.d
-- [X] hooks.d
-- [X] memmap.d
-- [X] page.d
-- [X] proc.d
-- [X] range.d
-- [X] rbtree.d
-- [X] region.d
-- [X] ring.d
-- [X] rtree.d
-- [X] scanner.d
-- [X] signal.d
-- [X] size.d
-- [X] sizeclass.d
-- [X] slab.d
-- [X] spec.d
-- [X] stack.d
-- [X] tbin.d
-- [X] tcache.d
-- [X] thread.d
-- [X] time.d
-- [X] tstate.d
-- [X] types.d
-- [X] util.d
+In order to use symgc, you should import the `symgc.gcobj` module. This will incorporate the symgc garbage collector as an option for your code to use. In order to use this GC, you must give druntime the name `sdc` as the gc requested. There are 2 ways to do this:
 
-Integration tests are also ported, and are in the test directory. Only SDC tests that are GC-specific were brought in.
+1. Use an `rt_options` static configuration. e.g.:
 
-To run, use dub in the test directory.
+```d
+extern(C) __gshared rt_options = ["gcopt=gc:sdc"];
+```
 
-- [X] Add object for including new GC into druntime.
-- [X] Test with real projects
-- [X] Remove pthread override, use normal druntime hooks.
-- [X] Detach scan threads from GC start and stop, allow them to be kept for next cycle and beyond.
+2. Pass the runtime parameter `--DRT-gcopt=gc:sdc` when starting your program.
 
-Note there are 3 configs:
-- `standard` - Uses only druntime hooks for all GC operations. The SDC `pthread_create` trampoline is not used
-- `pthread` - Uses only the `pthread_create` trampoline to capture started threads. This is the equivalent of SDC's non-druntime build.
-- `legacy` - Uses both druntime hooks and the `pthread_create` trampoline. This is what was developed when merging SDC's build of the GC with druntime.
+Without either of these, your program will NOT use the symgc, but the default D conservative GC.
 
-All three configs pass unittests (only a couple unittests needed modification to pass).
+Using the GC in this way will print the message "using SYM GC!" to the console on stdout. If you wish to avoid this message, you can use the gc option `sdcq`.
 
-The integration tests are explicitly using the `pthread` config, as those do not expect to use druntime.
+Note that if you use symgc as a dub dependency, it will be copmpiled in the same mode as your code. This means, if you build in debug mode (the default), then the GC will not be optimized.
 
-- [X] druntime update to handle thread creation and destruction.
-- [X] Port integration tests to standard config (druntime only).
-- [X] Windows support
+We are working on getting this set up as a dub dependency so you can include the GC optimized, regardless of your project's build settings.
+
+## Performance expectations
+
+In our testing, the GC performs very well in terms of maximum physical RAM required. In some cases saving over 50% of the RAM needed for certain programs. This is likely to be the case for very high memory usage programs, but not nesessarily for small memory programs.
+
+The performance of collection cycles is still a work in progress, and we are hoping to make this more efficient, but at the moment, some tests run much slower than the default GC, and some run faster.
+
+Multithreaded performance should be much better than the default GC, as symgc does not have a global lock.
 
 ## Todo
 
+- [ ] Provide mechanism to always include optimized GC.
 - [ ] ARM 64-bit support.
+- [ ] Mac/FreeBSD support.
 
 ## Acknowledgements
 
