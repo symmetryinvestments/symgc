@@ -532,6 +532,29 @@ private:
 			memset(ptr, 0, slotSize);
 		}
 
+		/**
+		 * If the allocation has metadata, we need to clear that flag.
+		 * Note: we do this on free and not alloc because explicit
+		 * freeing is not common in a GC language. The danger situation
+		 * we avoid is:
+		 * 1. allocate slab slot with metadata
+		 * 2. explicitly free slot, do not clear metadata flag
+		 * 3. reallocate slot without expecting metadata
+		 * 4. Overwrite slot metadata with inadvertent finalizer bit
+		 * 5. GC frees slot, tries to call finalizer that is garbage.
+		 *    Segfault or even attack vector.
+		 *
+		 * This clearing of the bit is slightly expensive, definitely
+		 * more expensive than not accessing the extent at all. But the
+		 * alternative is worse!
+		 */
+		if (ec.supportsMetadata) {
+			auto e = pd.extent;
+			auto se = SlabEntry(pd, ptr);
+			auto index = se.index;
+			e.disableMetadata(index);
+		}
+
 		auto index = getBinIndex(sc, pd.containsPointers);
 		auto bin = &bins[index];
 		if (likely(bin.free(ptr))) {
