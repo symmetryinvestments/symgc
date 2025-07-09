@@ -464,7 +464,8 @@ private:
 	lock.mutex.unlock();
 
 	assert(lock.count == SharedLock.Exclusive + 2);
-	assert(!lock.mutex.isHeld());
+	// note: this is a race, because the exclusive locker is trying to lock, and when we just unlocked the sharedlock's mutex, it tries to grab the lock to see if it can exclusively lock.
+	// assert(!lock.mutex.isHeld());
 	assert(exclusiveState.load() == 1);
 	sharedState.waitForState(2, 0);
 
