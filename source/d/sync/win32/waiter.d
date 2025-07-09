@@ -94,12 +94,8 @@ struct Win32Waiter {
 	void *run() {
 		while(true)
 		{
+			waiter.block();
 			auto st = state.load();
-			while(st == 0)
-			{
-				waiter.block();
-				st = state.load();
-			}
 			if(st == 2)
 				break;
 			assert(st == 1);
@@ -110,7 +106,7 @@ struct Win32Waiter {
 	}
 
 	auto tid = runThread(&run);
-	foreach(i; 0 .. 10)
+	foreach(i; 0 .. 1000)
 	{
 		assert(state.load() == 0);
 		state.store(1);
@@ -121,12 +117,13 @@ struct Win32Waiter {
 			import core.thread;
 			Thread.yield();
 		}
+		assert((waiter.wakeupCount.load() & Win32Waiter.CountMask) == 0);
 	}
 	assert(state.load() == 0);
 	state.store(2);
 	waiter.wakeup();
 
 	joinThread(tid);
-	assert(count.load() == 10);
+	assert(count.load() == 1000);
 	assert(waiter.wakeupCount.load() == 0);
 }
