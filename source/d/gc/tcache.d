@@ -78,7 +78,7 @@ private:
 	package const(void*)[][] tlsSegments;
 
 	/**
-	 * track GC runs.
+	 * Tracks GC runs.
 	 */
 	size_t nextGCRun;
 	bool enableGC;
