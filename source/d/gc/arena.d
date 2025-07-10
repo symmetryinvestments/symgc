@@ -164,12 +164,7 @@ public:
 		auto doTheRest() nothrow {
 			try {
 				uint ndalloc = 0;
-				scope(success) if (ndalloc > 0) {
-					foreach (i; 0 .. ndalloc) {
-						// FIXME: batch free to go through the lock once using freeExtentLocked.
-						filler.freeExtent(emap, dallocSlabs[i]);
-					}
-				}
+				scope(success) filler.batchFreeExtents(emap, dallocSlabs[0 .. ndalloc]);
 
 				auto ec = pds[0].extentClass;
 				auto sc = ec.sizeClass;
