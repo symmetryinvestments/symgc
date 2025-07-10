@@ -802,7 +802,7 @@ uint computeThreadCacheSize() {
 	shared Arena arena;
 
 	auto base = &arena.base;
-	scope(exit) arena.base.clear();
+	scope(exit) base.clear();
 
 	import d.gc.emap;
 	static shared ExtentMap emapStorage;
@@ -828,24 +828,28 @@ uint computeThreadCacheSize() {
 
 	// Refill the bin, check it is in the expected state.
 	ThreadBinState state;
-	tbin.refill(emap, &arena, state, SizeClass, slotSize);
 
-	assert(state.refilled, "Thread bin not refilled!");
-	assert(state.getFill(tbin.nmax) == BinSize, "Unexpected fill!");
-	assert(tbin.ncached == BinSize, "Invalid cached element count!");
-	assert(tbin.nlowWater == 0, "Invalid low water mark!");
+	auto checkState(bool refilled, bool flushed, uint nfill, uint ncached,
+	                uint nlowWater) {
+		assert(state.refilled == refilled, "Unexpected refilled state!");
+		assert(state.flushed == flushed, "Unexpected flushed state!");
+		assert(state.getFill(tbin.nmax) == nfill, "Unexpected fill!");
+		assert(tbin.ncached == ncached, "Invalid cached element count!");
+		assert(tbin.nlowWater == nlowWater, "Invalid low water mark!");
+	}
+
+	tbin.refill(emap, &arena, state, SizeClass, slotSize);
+	checkState(true, false, BinSize, BinSize, 0);
 
 	// Recycling a bin that is full with a low water mark of zero will
 	// raise the low water mark and reset the refilled flag.
 	tbin.recycle(emap, state, SizeClass);
-
-	assert(!state.refilled, "Thread bin refilled!");
-	assert(state.getFill(tbin.nmax) == BinSize, "Unexpected fill!");
-	assert(tbin.ncached == BinSize, "Invalid cached element count!");
-	assert(tbin.nlowWater == BinSize, "Invalid low water mark!");
+	checkState(false, false, BinSize, BinSize, BinSize);
 
 	// FIXME: We have a non zero low water mark, we should flush,
-	//        but there is no sensible way to do this at the moment.
+	//        but because we aren't using a arena that the code can
+	//        find from the extent map, there is no way to actually
+	//        test this with the current setup.
 
 	// Allocating from a bin that is in high demand increase the refill capacity.
 	state.base = 3;
@@ -853,18 +857,10 @@ uint computeThreadCacheSize() {
 		state.refilled = true;
 		tbin._low_water = tbin._top;
 
-		assert(state.refilled, "Thread bin not refilled!");
-		assert(state.getFill(tbin.nmax) == BinSize >> s, "Unexpected fill!");
-		assert(tbin.ncached == BinSize, "Invalid cached element count!");
-		assert(tbin.nlowWater == 0, "Invalid low water mark!");
+		checkState(true, false, BinSize >> s, BinSize, 0);
 
 		tbin.recycle(emap, state, SizeClass);
-
-		assert(!state.refilled, "Thread bin refilled!");
-		assert(state.getFill(tbin.nmax) == BinSize >> (s - 1),
-		       "Unexpected fill!");
-		assert(tbin.ncached == BinSize, "Invalid cached element count!");
-		assert(tbin.nlowWater == BinSize, "Invalid low water mark!");
+		checkState(false, false, BinSize >> (s - 1), BinSize, BinSize);
 	}
 
 	// If we have flushed, do not increase the size past BinSize / 2.
@@ -874,19 +870,11 @@ uint computeThreadCacheSize() {
 		state.flushed = true;
 		tbin._low_water = tbin._top;
 
-		assert(state.refilled, "Thread bin not refilled!");
-		assert(state.flushed, "Thread bin not flushed!");
-		assert(state.getFill(tbin.nmax) == BinSize >> s, "Unexpected fill!");
-		assert(tbin.ncached == BinSize, "Invalid cached element count!");
-		assert(tbin.nlowWater == 0, "Invalid low water mark!");
+		checkState(true, true, BinSize >> s, BinSize, 0);
 
 		tbin.recycle(emap, state, SizeClass);
 
 		auto ps = s > 1 ? s - 1 : 1;
-		assert(!state.refilled, "Thread bin refilled!");
-		assert(!state.flushed, "Thread bin flushed!");
-		assert(state.getFill(tbin.nmax) == BinSize >> ps, "Unexpected fill!");
-		assert(tbin.ncached == BinSize, "Invalid cached element count!");
-		assert(tbin.nlowWater == BinSize, "Invalid low water mark!");
+		checkState(false, false, BinSize >> ps, BinSize, BinSize);
 	}
 }
