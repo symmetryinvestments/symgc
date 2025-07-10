@@ -139,6 +139,7 @@ public:
 		ubyte sizeClass,
 		void** top,
 		void** bottom,
+		void** requested,
 		size_t slotSize,
 	) shared {
 		// TODO: in contracts
@@ -147,8 +148,8 @@ public:
 		import d.gc.slab;
 		assert(slotSize == binInfos[sizeClass].slotSize, "Invalid slot size!");
 
-		return bins[sizeClass]
-			.batchAllocate(&filler, emap, sizeClass, top, bottom, slotSize);
+		return bins[sizeClass].batchAllocate(&filler, emap, sizeClass, top,
+											 bottom, requested, slotSize);
 	}
 
 	uint batchFree(ref CachedExtentMap emap, inout(void)*[] worklist,
