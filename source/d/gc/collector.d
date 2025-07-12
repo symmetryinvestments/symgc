@@ -123,6 +123,14 @@ private:
 	}
 }
 
+uint disableAutomaticCollections() {
+	return gCollectorState.disableAutomaticCollections();
+}
+
+uint enableAutomaticCollections() {
+	return gCollectorState.enableAutomaticCollections();
+}
+
 void collectorPrepareForFork() {
 	gCollectorState.mutex.lock();
 }
@@ -144,6 +152,7 @@ struct CollectorState {
 private:
 	import d.sync.mutex;
 	Mutex mutex;
+	uint disableCount;
 
 	// This makes for a 32MB default target.
 	enum DefaultHeapSize = 32 * 1024 * 1024 / PageSize;
@@ -204,6 +213,20 @@ public:
 		(cast(CollectorState*) &this).scanningThreads = nThreads;
 	}
 
+	uint disableAutomaticCollections() shared {
+		mutex.lock();
+		scope(exit) mutex.unlock();
+
+		return (cast(CollectorState*) &this).disableAutomaticCollectionsImpl();
+	}
+
+	uint enableAutomaticCollections() shared {
+		mutex.lock();
+		scope(exit) mutex.unlock();
+
+		return (cast(CollectorState*) &this).enableAutomaticCollectionsImpl();
+	}
+
 private:
 	bool maybeRunGCCycleImpl(ref Collector collector) {
 		assert(mutex.isHeld(), "mutex not held!");
@@ -228,6 +251,10 @@ private:
 			nextTarget = lastHeapSize + delta;
 
 			lastTargetAdjustement += interval;
+		}
+
+		if (disableCount > 0) {
+			return false;
 		}
 
 		auto currentHeapSize = Arena.computeUsedPageCount();
@@ -272,6 +299,19 @@ private:
 
 		lastTargetAdjustement = lastCollectionStop;
 		nextTarget = max(target, minHeapSize);
+	}
+
+	uint disableAutomaticCollectionsImpl() {
+		assert(mutex.isHeld(), "mutex not held!");
+
+		return disableCount++;
+	}
+
+	uint enableAutomaticCollectionsImpl() {
+		assert(mutex.isHeld(), "mutex not held!");
+		assert(disableCount > 0);
+
+		return disableCount--;
 	}
 }
 
