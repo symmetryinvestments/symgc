@@ -83,6 +83,16 @@ void __sd_gc_tl_activate(bool activated) {
 	threadCache.activateGC(activated);
 }
 
+uint __sd_gc_enable() {
+	import d.gc.collector;
+	return enableAutomaticCollections();
+}
+
+uint __sd_gc_disable() {
+	import d.gc.collector;
+	return disableAutomaticCollections();
+}
+
 PageDescriptor __sd_gc_maybe_get_page_descriptor(void* ptr) {
 	return threadCache.maybeGetPageDescriptor(ptr);
 }

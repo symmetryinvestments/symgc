@@ -22,6 +22,8 @@ extern(C) nothrow {
 	void __sd_gc_free(void *ptr) @nogc;
 	void __sd_gc_add_roots(void[] range) @nogc;
 	void __sd_gc_remove_roots(void *ptr) @nogc;
+	uint __sd_gc_enable();
+	uint __sd_gc_disable();
 
 	// hook prototypes needed for druntime api (see below)
 	void* __sd_gc_hook_alloc(size_t size, bool containsPointers, bool zeroData);
@@ -33,8 +35,6 @@ extern(C) nothrow {
 	bool __sd_gc_hook_extend_array_used(void* ptr, size_t newUsed, size_t existingUsed);
 	bool __sd_gc_hook_shrink_array_used(void* ptr, size_t newUsed, size_t existingUsed);
 	bool __sd_gc_hook_reserve_array_capacity(void* ptr, size_t request, size_t existingUsed);
-
-	//void __sd_gc_set_scanning_thread_count(uint nThreads) @nogc;
 }
 
 enum TYPEINFO_IN_BLOCK = cast(void*)1;
@@ -130,8 +130,7 @@ final class SnazzyGC : GC
 {
 	void enable()
 	{
-		// TODO: implement when hook works
-		//__sd_gc_activate(true);
+		__sd_gc_enable();
 	}
 
 	/**
@@ -139,8 +138,7 @@ final class SnazzyGC : GC
 	 */
 	void disable()
 	{
-		// TODO: implement when hook works
-		//__sd_gc_activate(false);
+		__sd_gc_disable();
 	}
 
 	/**
