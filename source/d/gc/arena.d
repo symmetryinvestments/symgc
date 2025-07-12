@@ -139,6 +139,7 @@ public:
 		ubyte sizeClass,
 		void** top,
 		void** bottom,
+		void** requested,
 		size_t slotSize,
 	) shared {
 		// TODO: in contracts
@@ -147,8 +148,8 @@ public:
 		import d.gc.slab;
 		assert(slotSize == binInfos[sizeClass].slotSize, "Invalid slot size!");
 
-		return bins[sizeClass]
-			.batchAllocate(&filler, emap, sizeClass, top, bottom, slotSize);
+		return bins[sizeClass].batchAllocate(&filler, emap, sizeClass, top,
+											 bottom, requested, slotSize);
 	}
 
 	uint batchFree(ref CachedExtentMap emap, inout(void)*[] worklist,
@@ -163,12 +164,7 @@ public:
 		auto doTheRest() nothrow {
 			try {
 				uint ndalloc = 0;
-				scope(success) if (ndalloc > 0) {
-					foreach (i; 0 .. ndalloc) {
-						// FIXME: batch free to go through the lock once using freeExtentLocked.
-						filler.freeExtent(emap, dallocSlabs[i]);
-					}
-				}
+				scope(success) filler.batchFreeExtents(emap, dallocSlabs[0 .. ndalloc]);
 
 				auto ec = pds[0].extentClass;
 				auto sc = ec.sizeClass;
