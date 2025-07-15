@@ -325,8 +325,7 @@ final class SnazzyGC : GC
 	 */
 	@property RootIterator rootIter() @nogc
 	{
-		// TODO: add once there is a hook
-		return null;
+		return &iterateRoots!Root;
 	}
 
 	/**
@@ -350,8 +349,12 @@ final class SnazzyGC : GC
 	 */
 	@property RangeIterator rangeIter() @nogc
 	{
-		// TODO: add once there is a hook
-		return null;
+		return &iterateRoots!Range;
+	}
+
+	private int iterateRoots(T)(scope int delegate(ref T) nothrow dg) nothrow {
+		import d.gc.global;
+		return gState.iterateRoots(dg);
 	}
 
 	/**

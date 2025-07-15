@@ -99,6 +99,24 @@ public:
 		(cast(GCState*) &this).minimizeRootsImpl();
 	}
 
+	int iterateRoots(R)(scope int delegate(ref R) nothrow dg) shared
+	{
+		try {
+			import d.gc.thread;
+			enterBusyState();
+			scope(exit) exitBusyState();
+
+			mutex.lock();
+			scope(exit) mutex.unlock();
+
+			return (cast(GCState*) &this).iterateRootsImpl(dg);
+		} catch(Exception) {
+			// ignore exceptions.
+			// TODO: remove this when everything is correctly marked nothrow.
+			return 0;
+		}
+	}
+
 private:
 	void addRootsImpl(const void[] range) {
 		assert(mutex.isHeld(), "Mutex not held!");
@@ -172,6 +190,35 @@ private:
 				scan(range);
 			}
 		}
+	}
+
+	import core.gc.gcinterface : Root, Range;
+	int iterateRootsImpl(scope int delegate(ref Root) nothrow dg) nothrow
+	{
+		assert(mutex.isHeld(), "Mutex not held!");
+		foreach (range; roots) {
+			if(range.length == 0) {
+				auto r = Root(cast(void*)range.ptr);
+				if (auto ret = dg(r)) {
+					return ret;
+				}
+			}
+		}
+		return 0;
+	}
+
+	int iterateRootsImpl(scope int delegate(ref Range) nothrow dg) nothrow
+	{
+		assert(mutex.isHeld(), "Mutex not held!");
+		foreach (range; roots) {
+			if(range.length >= 0) {
+				auto r = Range(cast(void*)range.ptr, cast(void*)(range.ptr + range.length));
+				if (auto ret = dg(r)) {
+					return ret;
+				}
+			}
+		}
+		return 0;
 	}
 }
 
