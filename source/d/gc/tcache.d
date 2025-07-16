@@ -136,6 +136,8 @@ public:
 
 	auto clearProbationState() => state.clearProbationState();
 
+	ulong allocatedInThread() nothrow => allocated;
+
 	version(Windows) {
 		void checkLockWaiting() {
 			// If there is a waiter registered, check if it's busy. If it's busy, then we are going to do a weird busy state switcheroo.

@@ -381,8 +381,8 @@ final class SnazzyGC : GC
 	 */
 	ulong allocatedInCurrentThread() nothrow
 	{
-		// TODO: add once there is a hook
-		return 0;
+		import d.gc.tcache;
+		return threadCache.allocatedInThread();
 	}
 
 	/**
