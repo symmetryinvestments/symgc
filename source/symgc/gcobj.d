@@ -154,7 +154,7 @@ final class SnazzyGC : GC
 	 */
 	void minimize() nothrow
 	{
-		// TODO: add once there is a hook
+		// Minimization happens on every collect.
 	}
 
 	/**
@@ -232,7 +232,8 @@ final class SnazzyGC : GC
 	 */
 	size_t extend(void* p, size_t minsize, size_t maxsize, const TypeInfo ti) nothrow
 	{
-		// TODO: add once there is a hook
+		// Our GC does not support this style of extend. Instead you should use
+		// the array functions. These will operate the same, but are safer.
 		return 0;
 	}
 
@@ -241,7 +242,9 @@ final class SnazzyGC : GC
 	 */
 	size_t reserve(size_t size) nothrow
 	{
-		// TODO: add once there is a hook
+		// Our GC does not support reserving memory from the OS. In practice,
+		// this would not work anyway, as all preallocated mdmory would be handed
+		// back to the OS on the next collect.
 		return 0;
 	}
 
