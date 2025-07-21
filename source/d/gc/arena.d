@@ -11,6 +11,18 @@ import symgc.intrinsics;
 import d.gc.util;
 private enum ArenaSize = alignUp(Arena.sizeof, CacheLine);
 
+
+struct CollectStats {
+	// Number of bytes collected by a collect cycle
+	size_t bytesCollected;
+	// Number of pages still committed after collect
+	size_t pagesCommitted;
+	// Number of bytes marked as allocated. This includes large
+	// allocations still alive, and slots in slabs that are marked
+	// as allocated.
+	size_t bytesAllocated;
+}
+
 struct Arena {
 private:
 	ulong bits;
@@ -217,8 +229,8 @@ package:
 		filler.prepareGCCycle(emap);
 	}
 
-	void collect(ref CachedExtentMap emap, ubyte gcCycle) shared {
-		filler.collect(emap, gcCycle);
+	void collect(ref CachedExtentMap emap, ubyte gcCycle, ref CollectStats stats) shared {
+		return filler.collect(emap, gcCycle, stats);
 	}
 
 	void clearBinsForCollection() shared {

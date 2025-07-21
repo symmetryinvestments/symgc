@@ -121,6 +121,18 @@ public:
 		isScanningThread = true;
 	}
 
+	size_t totalCachedAllocationSize() {
+		// Note, this is called from outside the thread, but we don't care too much
+		// about exactness, because it's data that can be rapidly changing anyway.
+		size_t cachedSize = 0;
+		foreach(idx, ref bin; bins) {
+			// lower bit is whether it contains pointers or not. Upper bits are size class.
+			auto slotSize = binInfos[idx / 2].slotSize;
+			cachedSize += bin.numCached * slotSize;
+		}
+		return cachedSize;
+	}
+
 	@property
 	auto suspendState() => state.suspendState;
 
@@ -136,7 +148,7 @@ public:
 
 	auto clearProbationState() => state.clearProbationState();
 
-	ulong allocatedInThread() nothrow => allocated;
+	ulong allocatedInThread() nothrow @nogc => allocated;
 
 	version(Windows) {
 		void checkLockWaiting() {

@@ -291,10 +291,17 @@ final class SnazzyGC : GC
 	 * Retrieve statistics about garbage collection.
 	 * Useful for debugging and tuning.
 	 */
-	core.memory.GC.Stats stats() @safe nothrow @nogc
+	core.memory.GC.Stats stats() @trusted nothrow @nogc
 	{
-		// TODO: add once there is a hook
-		return core.memory.GC.Stats();
+		import d.gc.collector;
+		// TODO: remove this when nothrow is properly tagged everywhere.
+		auto stats = (cast(typeof(lastCollectionInfo()) function() nothrow @nogc)&lastCollectionInfo)();
+		import d.gc.spec : PageSize;
+		return core.memory.GC.Stats(
+			usedSize : stats.usedPages * PageSize,
+			freeSize: stats.freeBytes,
+			allocatedInCurrentThread : threadCache.allocatedInThread()
+		);
 	}
 
 	/**
