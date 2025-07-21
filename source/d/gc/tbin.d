@@ -199,6 +199,15 @@ public:
 		return flush(emap, ncached - nflush);
 	}
 
+	/**
+	 * This function aids in getting a current amount of data free on the
+	 * Returns: Number of cached allocations
+	 */
+	@property
+	ushort numCached() {
+		return ncached;
+	}
+
 private:
 	@property
 	ushort current() const {

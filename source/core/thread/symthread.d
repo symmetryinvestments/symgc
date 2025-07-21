@@ -250,3 +250,18 @@ void clearDruntimeThreadProbation() {
 		tc.clearProbationState();
 	}
 }
+
+size_t getTotalCachedAllocations() {
+	import d.gc.tcache;
+	size_t totalCached = 0;
+	foreach(t; ThreadIterator(ThreadBase.sm_tbeg.toThread))
+	{
+		auto tc = cast(ThreadCache*) t.tlsGCData();
+		if (tc is null) {
+			continue;
+		}
+
+		totalCached += tc.totalCachedAllocationSize();
+	}
+	return totalCached;
+}

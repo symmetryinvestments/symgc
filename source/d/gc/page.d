@@ -66,6 +66,7 @@ private:
 	shared Base base;
 
 	import d.gc.region;
+	import d.gc.slab;
 	package shared(RegionAllocator)* regionAllocator;
 
 public:
@@ -294,11 +295,11 @@ public:
 		(cast(PageFiller*) &this).prepareGCCycleImpl(emap);
 	}
 
-	void collect(ref CachedExtentMap emap, ubyte gcCycle) shared {
+	void collect(ref CachedExtentMap emap, ubyte gcCycle, ref CollectStats stats) shared {
 		mutex.lock();
 		scope(exit) mutex.unlock();
 
-		(cast(PageFiller*) &this).collectImpl(emap, gcCycle);
+		(cast(PageFiller*) &this).collectImpl(emap, gcCycle, stats);
 	}
 
 	/**
@@ -802,7 +803,7 @@ private:
 		}
 	}
 
-	void collectImpl(ref CachedExtentMap emap, ubyte gcCycle) {
+	void collectImpl(ref CachedExtentMap emap, ubyte gcCycle, ref CollectStats stats) {
 		assert(mutex.isHeld(), "Mutex not held!");
 
 		auto sharedThis = cast(shared(PageFiller)*) &this;
@@ -812,8 +813,8 @@ private:
 		PriorityExtentHeap[BinCount] collectedSlabs;
 		auto slabs = collectedSlabs[0 .. BinCount];
 
-		collectDenseAllocations(emap, slabs);
-		collectSparseAllocations(emap, slabs, gcCycle);
+		collectDenseAllocations(emap, slabs, stats);
+		collectSparseAllocations(emap, slabs, gcCycle, stats);
 
 		sharedThis.arena.combineBinsAfterCollection(collectedSlabs);
 	}
@@ -875,7 +876,8 @@ private:
 	}
 
 	void collectDenseAllocations(ref CachedExtentMap emap,
-	                             PriorityExtentHeap[] slabs) {
+	                             PriorityExtentHeap[] slabs,
+								 ref CollectStats stats) {
 		assert(mutex.isHeld(), "Mutex not held!");
 
 		PriorityExtentHeap deadExtents;
@@ -933,6 +935,8 @@ private:
 					finalizeSlabNimble(evicted, metadataFlags, sc, e, j);
 				}
 
+				stats.bytesCollected += count * binInfos[sc].slotSize;
+
 				// The slab is empty.
 				if (occupancyMask == 0) {
 					deadExtents.insert(e);
@@ -940,10 +944,14 @@ private:
 				}
 
 				e.bits += count * Extent.FreeSlotsUnit;
+				auto nfree = e.nfree;
 
-				if (e.nfree > 0) {
+				if (nfree > 0) {
 					slabs[ec.sizeClass].insert(e);
 				}
+
+				stats.bytesAllocated += (binInfos[sc].nslots - nfree) * binInfos[sc].slotSize;
+				stats.pagesCommitted += binInfos[sc].npages;
 			}
 		}
 
@@ -969,7 +977,8 @@ private:
 	 * Sparse collection.
 	 */
 	void collectSparseAllocations(ref CachedExtentMap emap,
-	                              PriorityExtentHeap[] slabs, ubyte gcCycle) {
+	                              PriorityExtentHeap[] slabs, ubyte gcCycle,
+								  ref CollectStats stats) {
 		assert(mutex.isHeld(), "Mutex not held!");
 
 		PriorityExtentHeap deadExtents;
@@ -999,6 +1008,7 @@ private:
 
 					if (e.isMarkedLarge(gcCycle)) {
 						// It's alive.
+						stats.pagesCommitted += e.npages;
 						continue;
 					}
 
@@ -1009,6 +1019,7 @@ private:
 						__sd_gc_finalize(e.address, e.usedCapacity, f);
 					}
 
+					stats.bytesCollected += e.npages;
 					deadExtents.insert(e);
 					continue;
 				}
@@ -1027,9 +1038,13 @@ private:
 				auto oldOccupancy = e.slabData.rawContent[0];
 				auto newOccupancy = oldOccupancy & markBits;
 				auto evicted = oldOccupancy ^ newOccupancy;
+				auto sc = ec.sizeClass;
 
 				// Call any finalizers on dying slots.
-				finalizeSlabNimble(evicted, metadataFlags, ec.sizeClass, e, 0);
+				finalizeSlabNimble(evicted, metadataFlags, sc, e, 0);
+
+				auto count = popCount(evicted);
+				stats.bytesCollected += count * binInfos[sc].slotSize;
 
 				// The slab is empty.
 				if (newOccupancy == 0) {
@@ -1037,14 +1052,16 @@ private:
 					continue;
 				}
 
-				auto count = popCount(evicted);
-
 				e.slabData.rawContent[0] = newOccupancy;
 				e.bits += count * Extent.FreeSlotsUnit;
 
-				if (e.nfree > 0) {
-					slabs[ec.sizeClass].insert(e);
+				auto nfree = e.nfree;
+				if (nfree > 0) {
+					slabs[sc].insert(e);
 				}
+
+				stats.bytesAllocated += (binInfos[sc].nslots - nfree) * binInfos[sc].slotSize;
+				stats.pagesCommitted += npages;
 			}
 		}
 

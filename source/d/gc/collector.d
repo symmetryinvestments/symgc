@@ -6,6 +6,15 @@ import d.gc.spec;
 import d.gc.tcache;
 import d.gc.time;
 import d.gc.util;
+import core.thread.symthread;
+
+struct CollectionInfo {
+	size_t usedPages;
+	size_t freeBytes;
+	size_t pauseTime;
+	size_t start;
+	size_t stop;
+}
 
 struct Collector {
 	ThreadCache* treadCache;
@@ -31,7 +40,9 @@ struct Collector {
 	}
 
 private:
-	void runGCCycleLocked() {
+	CollectionInfo runGCCycleLocked() {
+		CollectionInfo info;
+		info.start = getMonotonicTime();
 		assert(gCollectorState.mutex.isHeld(), "Mutex not held!");
 		assert(!threadCache.state.busy, "Cannot run GC cycle while busy!");
 
@@ -58,6 +69,7 @@ private:
 		startGCThreads(nScanningThreads);
 
 		import d.gc.thread;
+		auto pauseStartTime = getMonotonicTime();
 		stopTheWorld();
 
 		import d.gc.region;
@@ -72,7 +84,13 @@ private:
 		// Go on and on until all worklists are empty.
 		markGC(gcCycle, managedAddressSpace);
 
+		version(Symgc_druntime_hooks) {
+			import core.thread.symthread;
+			// note, this skips our own threadcache's cache, but that's OK we're about to flush it.
+			info.freeBytes = getTotalCachedAllocations();
+		}
 		restartTheWorld();
+		info.pauseTime = getMonotonicTime() - pauseStartTime;
 
 		/**
 		 * We might have allocated, and therefore refilled the bin
@@ -86,7 +104,10 @@ private:
 		 */
 		threadCache.flush();
 
-		collect(gcCycle);
+		auto pageCollectStats = collect(gcCycle);
+		info.usedPages = pageCollectStats.pagesCommitted;
+		info.freeBytes += pageCollectStats.pagesCommitted * PageSize - pageCollectStats.bytesAllocated;
+		assert(pageCollectStats.pagesCommitted == Arena.computeUsedPageCount());
 
 		/**
 		 * Removing roots cannot realloc while inside a finalizer,
@@ -98,6 +119,9 @@ private:
 
 		// Probation period is over, threads can enter busy state now.
 		clearWorldProbation();
+
+		info.stop = getMonotonicTime();
+		return info;
 	}
 
 	void prepareGCCycle() {
@@ -110,16 +134,19 @@ private:
 		}
 	}
 
-	void collect(ubyte gcCycle) {
+	CollectStats collect(ubyte gcCycle) {
 		threadCache.startCollection();
 		scope(exit) threadCache.endCollection();
+
+		CollectStats stats;
 		foreach (i; 0 .. ArenaCount) {
 			import d.gc.arena;
 			auto a = Arena.getIfInitialized(i);
 			if (a !is null) {
-				a.collect(emap, gcCycle);
+				a.collect(emap, gcCycle, stats);
 			}
 		}
+		return stats;
 	}
 }
 
@@ -147,6 +174,13 @@ void setScanningThreads(uint nThreads) {
 	gCollectorState.setScanningThreads(nThreads);
 }
 
+CollectionInfo lastCollectionInfo() {
+	gCollectorState.mutex.lock();
+	scope(exit) gCollectorState.mutex.unlock();
+
+	return (cast(CollectorState*)&gCollectorState).lastCollectionInfo;
+}
+
 private:
 struct CollectorState {
 private:
@@ -160,10 +194,7 @@ private:
 	/**
 	 * Data about the last collection cycle.
 	 */
-	ulong lastCollectionStart;
-	ulong lastCollectionStop;
-
-	size_t lastHeapSize;
+	CollectionInfo lastCollectionInfo;
 
 	/**
 	 * Filtered data over several collection.
@@ -242,13 +273,17 @@ private:
 	bool needCollection() {
 		auto now = getMonotonicTime();
 		auto interval =
-			max(lastCollectionStop - lastCollectionStart, 100 * Millisecond);
+			max(lastCollectionInfo.stop - lastCollectionInfo.start, 100 * Millisecond);
 
+		int i = 0;
 		while (now - lastTargetAdjustement >= interval) {
-			auto delta = nextTarget - lastHeapSize;
+			auto delta = nextTarget - lastCollectionInfo.usedPages;
 			delta -= delta >> lgTargetDecay;
-			delta += lastHeapSize >> (lgTargetDecay + lgMinOverhead);
-			nextTarget = lastHeapSize + delta;
+			delta += lastCollectionInfo.usedPages >> (lgTargetDecay + lgMinOverhead);
+			if(lastCollectionInfo.usedPages + delta == nextTarget) {
+				break;
+			}
+			nextTarget = lastCollectionInfo.usedPages + delta;
 
 			lastTargetAdjustement += interval;
 		}
@@ -264,10 +299,9 @@ private:
 	void runGCCycle(ref Collector collector) {
 		assert(mutex.isHeld(), "mutex not held!");
 
-		lastCollectionStart = getMonotonicTime();
 		scope(exit) updateTargetPageCount();
 
-		collector.runGCCycleLocked();
+		lastCollectionInfo = collector.runGCCycleLocked();
 	}
 
 	void updateTargetPageCount() {
@@ -276,13 +310,11 @@ private:
 			return base - (base >> 3) + (n >> 3);
 		}
 
-		lastCollectionStop = getMonotonicTime();
 		amortizedDuration =
-			next(amortizedDuration, lastCollectionStop - lastCollectionStart);
+			next(amortizedDuration, lastCollectionInfo.stop - lastCollectionInfo.start);
 
-		lastHeapSize = Arena.computeUsedPageCount();
-		amortizedHeapSize = next(amortizedHeapSize, lastHeapSize);
-		peakHeapSize = max(next(peakHeapSize, lastHeapSize), lastHeapSize);
+		amortizedHeapSize = next(amortizedHeapSize, lastCollectionInfo.usedPages);
+		peakHeapSize = max(next(peakHeapSize, lastCollectionInfo.usedPages), lastCollectionInfo.usedPages);
 
 		// Peak target at 1.625x the peak to prevent heap explosion.
 		auto tpeak = peakHeapSize + (peakHeapSize >> 1) + (peakHeapSize >> 3);
@@ -291,13 +323,13 @@ private:
 		auto tbaseline = 2 * amortizedHeapSize;
 
 		// We set the target at 2x the current heap size.
-		auto target = 2 * lastHeapSize;
+		auto target = 2 * lastCollectionInfo.usedPages;
 
 		// Clamp the target using tpeak and tbaseline.
 		target = max(target, tbaseline);
 		target = min(target, tpeak);
 
-		lastTargetAdjustement = lastCollectionStop;
+		lastTargetAdjustement = lastCollectionInfo.stop;
 		nextTarget = max(target, minHeapSize);
 	}
 
