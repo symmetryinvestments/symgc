@@ -10,7 +10,11 @@ import core.stdc.config;
 
 extern(C) long syscall(long number, ...);
 
-enum SYS_futex = 202;
+version(X86_64) {
+	enum SYS_futex = 202;
+} else version(AArch64) {
+	enum SYS_futex = 98;
+}
 
 int futex_wait(shared(Atomic!uint)* futex,
 			   uint expected, /* TODO: timeout */ ) {
