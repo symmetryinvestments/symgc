@@ -9,10 +9,11 @@ The idea is to extract the GC portions of the SDC runtime (and everything needed
 ### OS/Arch
 
 * Intel/AMD 64-bit CPU.
+* AArch64 Linux 4k pages tested only!
 * Linux or Windows (so far)
 
 ### Compiler
-* DMD 2.111 -> Linux only, does not include features needed for Windows support.
+* ~~DMD 2.111 -> Linux only, does not include features needed for Windows support.~~ EDIT: this is not actually correct, and further tests have shown that Fiber-based cases do not work properly. For that reason, I recommend waiting for 2.112.
 * DMD 2.112 (or unreleased master) or later. This is required for Windows support. It will also increase Linux performance.
 
 ## Using
@@ -29,7 +30,7 @@ extern(C) __gshared rt_options = ["gcopt=gc:sdc"];
 
 Without either of these, your program will NOT use the symgc, but the default D conservative GC.
 
-Using the GC in this way will print the message "using SYM GC!" to the console on stdout. If you wish to avoid this message, you can use the gc option `sdcq`.
+Using the GC in this way will print the message "using SYM GC!" to the console on stdout. If you wish to avoid this message, you can use the gc option `sdcq` instead of `sdc`.
 
 Note that if you use symgc as a dub dependency, it will be copmpiled in the same mode as your code. This means, if you build in debug mode (the default), then the GC will not be optimized.
 
@@ -46,8 +47,11 @@ Multithreaded performance should be much better than the default GC, as symgc do
 ## Todo
 
 - [ ] Provide mechanism to always include optimized GC.
-- [ ] ARM 64-bit support.
+- [X] ARM 64-bit support.
+- [ ] ARM 64-bit support with 16k pages.
 - [ ] Mac/FreeBSD support.
+- [ ] Explore tuning parameters for memory consumption/performance
+- [ ] SIMD improvements for scanner.
 
 ## Acknowledgements
 
