@@ -219,7 +219,7 @@ void* os_pages_map(void* addr, size_t size, size_t alignment) {
 
 	version(linux) {
 		enum PagesFDTag = -1;
-		enum MMapFlags = MAP_PRIVATE | MAP_ANONYMOUS;
+		enum MMapFlags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
 
 		auto ret =
 			mmap(addr, size, PROT_READ | PROT_WRITE, MMapFlags, PagesFDTag, 0);
