@@ -2,7 +2,7 @@ import symgc.gcobj;
 
 extern(C) __gshared rt_options = ["gcopt=gc:sdc"];
 
-__gshared void[] arr;
+__gshared void[][256] arr;
 
 void main()
 {
@@ -11,6 +11,6 @@ void main()
 		import core.stdc.stdio;
 		if(i % 10000 == 0)
 			printf("here %d\n", i);
-		arr = new void[10_000_000];
+		arr[i % arr.length] = new void[10_000_000];
 	}
 }

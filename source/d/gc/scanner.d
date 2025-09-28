@@ -24,6 +24,16 @@ void markGC(ubyte gcCycle, AddressRange managedSpace) {
 	gScanner.mark(gcCycle, managedSpace);
 }
 
+import d.sync.atomic;
+
+shared Atomic!size_t totalBytesScanned;
+
+shared static ~this() {
+	auto bytesScanned = totalBytesScanned.load;
+	import core.stdc.stdio;
+	printf("scanned %lld bytes\n", bytesScanned);
+}
+
 private:
 struct ScanningList {
 	@disable this(this);
@@ -790,6 +800,7 @@ public:
 			//auto current = r.ptr;
 			//auto top = current + r.length;
 			rangeFilter.initScanBlock(r);
+			totalBytesScanned.fetchAdd(r.length * (void*).sizeof);
 
 			while(true) {
 				auto validPtrs = rangeFilter();
@@ -955,7 +966,7 @@ private:
 	enum FreeBits = 8 * PointerSize - LengthShift;
 
 	// Scan parameter.
-	enum WorkUnit = 16 * PointerInPage;
+	enum WorkUnit = 64 * PointerInPage;
 
 public:
 	@property

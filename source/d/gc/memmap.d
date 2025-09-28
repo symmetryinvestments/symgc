@@ -115,8 +115,8 @@ void pages_unmap(void* addr, size_t size) {
 
 void pages_purge(void* addr, size_t size) {
 	version(linux) {
-		auto ret = madvise(addr, size, MADV_DONTNEED);
-		assert(ret == 0, "madvise failed!");
+		//auto ret = madvise(addr, size, MADV_DONTNEED);
+		//assert(ret == 0, "madvise failed!");
 	} else version(Windows) {
 		VirtualFree(addr, size, MEM_DECOMMIT);
 	}
