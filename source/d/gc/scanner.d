@@ -10,6 +10,8 @@ import d.gc.spec;
 import d.gc.util;
 import d.gc.tcache;
 
+//version = SimpleFilter;
+
 void startGCThreads(uint nThreads) {
 	(cast(Scanner*)&gScanner).startThreads(nThreads);
 }
@@ -528,6 +530,197 @@ struct LastDenseSlabCache {
 	}
 }
 
+version(SimpleFilter) {
+struct StreamingWithinBoundsFilter {
+@nogc nothrow pure @safe:
+    @trusted void reinit(const(void*)[] vptrs, const(void)* minAddr, size_t memSize) {
+		initFilterRange(minAddr, memSize);
+		initScanBlock(vptrs);
+    }
+
+    @trusted void initScanBlock(const(void*)[] vptrs) {
+        vpp = vptrs.ptr;
+		vppend = vptrs.ptr + ((top > bottom) ? vptrs.length : 0);
+    }
+
+    @trusted void initFilterRange(const(void)* minAddr, size_t memSize) {
+        bottom = minAddr;
+		top = minAddr + memSize;
+    }
+
+    @trusted const(void)*[] opCall() return {
+		// naive loop, no simd
+		size_t cnt = 0;
+		while(cnt < buf.length && vpp < vppend) {
+			auto ptr = buf[cnt] = *vpp;
+			cnt += (ptr >= bottom && ptr < top);
+			++vpp;
+		}
+        return cnt ? buf.ptr[0 .. cnt] : null;
+	}
+
+private:
+    const(void*)* vppend = null;
+    const(void*)* vpp = null;
+    const(void)* bottom = null;
+    const(void)* top = null;
+    const(void)*[64] buf = void;
+}
+}
+else {
+struct StreamingWithinBoundsFilter {
+@nogc nothrow pure @safe:
+
+    @trusted void reinit(const(void*)[] vptrs, const(void)* minAddr, size_t memSize) {
+		initFilterRange(minAddr, memSize);
+		initScanBlock(vptrs);
+    }
+
+    @trusted void initScanBlock(const(void*)[] vptrs) {
+        vpp = vptrs.ptr;
+        remaining = (afterValid > beforeValid) ? vptrs.length : 0;
+    }
+
+    @trusted void initFilterRange(const(void)* minAddr, size_t memSize) {
+        beforeValid = minAddr - 1;
+        afterValid = minAddr + memSize;
+    }
+
+    // returns null when empty
+    // max return length is 64
+    // return length less than 57 indicates completion
+    @trusted const(void)*[] opCall() return {
+        if (remaining <= 7)
+            return sevenOrFewer_(0);
+
+        static assert(size_t.sizeof == ptrdiff_t.sizeof);
+        alias W = size_t;
+        alias W8 = W[8];
+        alias V = __vector(W8);
+        const V beforeValidVec = cast(W)beforeValid;
+        const V afterValidVec = cast(W)afterValid;
+
+        size_t nxt;
+        while (true) {
+            static assert(buf.length >= 8);
+            const bufEights = (buf.length - nxt) >>> 3;
+            if (bufEights < 1)
+                return buf.ptr[0 .. nxt];
+
+            // (bufEights > 0) invariant guarantees that nxt will stay in bounds within sevenOrFewer_
+            const srcEights = remaining >>> 3;
+            if (srcEights < 1)
+                return sevenOrFewer_(nxt);
+
+            const eightsAvailable = bufEights < srcEights ? bufEights : srcEights;
+            auto w8s = (cast(W8*)(vpp))[0 .. eightsAvailable];
+            vpp = cast(void**)w8s.ptr + (eightsAvailable << 3);
+            remaining -= (eightsAvailable << 3);
+
+            foreach (ref w8; w8s[]) {
+                V vx = void;
+                vx[] = w8[];
+
+                // msb of 1 indicates value is in bounds
+                vx = (vx - afterValidVec) & (beforeValidVec - vx);
+
+                // isolate msb as lsb
+                vx >>>= (W.sizeof * 8) - 1;
+                if (const notEvenOneIsInBounds = vx is V.init)
+                    continue;
+
+                // append all the values found to be within bounds
+                W8 a = void;
+                a[] = vx[];
+                foreach (i, word; w8) {
+                    buf.ptr[nxt] = cast(void*)word;
+                    nxt += a.ptr[i];
+                }
+            }
+        }
+    }
+
+private:
+    size_t remaining = 0;
+    const(void*)* vpp = void;
+    const(void)* beforeValid = void;
+    const(void)* afterValid = void;
+    const(void)*[64] buf = void;
+
+    @system const(void)*[] sevenOrFewer_(size_t nxt) {
+        auto tail = vpp[0 .. remaining & 0x7];
+        remaining = 0;
+        foreach (ptr; tail) {
+            const bump = ((ptr - afterValid) & (beforeValid - ptr)) >>> ((ptrdiff_t.sizeof * 8) - 1);
+            buf.ptr[nxt] = ptr;
+            nxt += bump;
+        }
+        return nxt ? buf.ptr[0 .. nxt] : null;
+    }
+}
+}
+
+@"StreamingWithinBoundsFilter" @nogc nothrow unittest {
+    StreamingWithinBoundsFilter f;
+
+    const(void)* minAddr;
+    minAddr += 4;
+    enum memSize = 4;
+    const(void)* maxAddr = minAddr + (memSize - 1);
+    const(void)*[4] badAddr = [minAddr - 2, minAddr - 1, maxAddr + 1, maxAddr + 2];
+    const(void)*[4] goodAddr = [minAddr, minAddr + 1, maxAddr - 1, maxAddr];
+    const(void)*[3 * f.buf.length] vptrBuf;
+
+    void fillBad(const(void)*[] vptrs) {
+        foreach (i, ref ptr; vptrs)
+            ptr = badAddr[i % badAddr.length];
+    }
+
+    void fillGood(const(void)*[] vptrs) {
+        foreach (i, ref ptr; vptrs)
+            ptr = goodAddr[i % goodAddr.length];
+    }
+
+    assert(f() is null, "default filter should yield null");
+
+    void testSmallResponse(const(void)*[] vptrs, size_t goodCount) {
+        goodCount = goodCount > vptrs.length ? vptrs.length : goodCount;
+        f.reinit(vptrs, minAddr, memSize);
+        fillBad(vptrs[]);
+        foreach (i; 0 .. vptrs.length - goodCount) {
+            auto good = vptrs[i .. i + goodCount];
+            fillGood(good[]);
+            f.reinit(vptrs, minAddr, memSize);
+            auto a = f();
+            assert(a[] == good[0 .. a.length]);
+            auto b = f();
+            assert((b is null) == (a.length == good.length));
+            assert(b[] == good[a.length .. $]);
+            assert(f() is null, "filter didn't empty");
+            fillBad(good[]);
+        }
+    }
+
+    void testFullResponse(const(void)*[] vptrs) {
+        f.reinit(vptrs, minAddr, memSize);
+        fillGood(vptrs[]);
+        size_t found;
+        while (auto a = f()) {
+            const n = a.length;
+            found += n;
+            assert(vptrs[found - n .. found] == a[], "full response failed");
+        }
+        assert(found == vptrs.length, "full response didn't find them all");
+    }
+
+    foreach (sz; 0 .. vptrBuf.length) {
+        auto vptrs = vptrBuf[0 .. sz];
+        foreach (goodCount; 0 .. goodAddr.length + 1)
+            testSmallResponse(vptrs, goodCount);
+        testFullResponse(vptrs);
+    }
+}
+
 struct Worker {
 private:
 	shared(Scanner)* scanner;
@@ -589,31 +782,107 @@ public:
 		uint cursor;
 		WorkItem[WorkListCapacity] worklist;
 
+		StreamingWithinBoundsFilter rangeFilter;
+		rangeFilter.initFilterRange(ms.ptr, ms.length);
+
 		while (true) {
 			auto r = item.range;
-			auto current = r.ptr;
-			auto top = current + r.length;
+			//auto current = r.ptr;
+			//auto top = current + r.length;
+			rangeFilter.initScanBlock(r);
 
-			for (; current < top; current++) {
-				auto ptr = *current;
-				if (!ms.contains(ptr)) {
-					// This is not a pointer, move along.
-					continue;
-				}
+			while(true) {
+				auto validPtrs = rangeFilter();
+				foreach(ptr; validPtrs) {
 
-				if (cache.slab.contains(ptr)) {
-				MarkDense:
-					auto base = cache.slab.ptr;
-					auto offset = ptr - base;
+					if (cache.slab.contains(ptr)) {
+					MarkDense:
+						auto base = cache.slab.ptr;
+						auto offset = ptr - base;
 
-					auto ldb = cache.bin;
-					auto index = ldb.computeIndex(offset);
+						auto ldb = cache.bin;
+						auto index = ldb.computeIndex(offset);
 
-					auto pd = cache.pageDescriptor;
-					assert(pd.extent !is null);
-					assert(pd.extent.contains(ptr));
+						auto pd = cache.pageDescriptor;
+						assert(pd.extent !is null);
+						assert(pd.extent.contains(ptr));
 
-					if (!markDense(pd, index)) {
+						if (!markDense(pd, index)) {
+							continue;
+						}
+
+						if (!pd.containsPointers) {
+							continue;
+						}
+
+						auto slotSize = ldb.slotSize;
+						auto i = WorkItem(base + index * slotSize, slotSize);
+						if (DepthFirst) {
+							scanBreadthFirst(i, cache);
+							continue;
+						}
+
+						if (likely(cursor < WorkListCapacity)) {
+							worklist[cursor++] = i;
+							continue;
+						}
+
+						scanner.work.addToWorkList(worklist[0 .. WorkListCapacity]);
+
+						cursor = 1;
+						worklist[0] = i;
+						continue;
+					}
+
+					auto aptr = alignDown(ptr, PageSize);
+					auto pd = emap.lookup(aptr);
+
+					auto e = pd.extent;
+					if (e is null) {
+						// We have no mapping here, move on.
+						continue;
+					}
+
+					auto ec = pd.extentClass;
+					if (ec.dense) {
+						assert(e !is cache.pageDescriptor.extent);
+
+						auto ldb = binInfos[ec.sizeClass];
+						auto lds = AddressRange(aptr - pd.index * PageSize,
+												ldb.npages * PageSize);
+
+						cache = LastDenseSlabCache(lds, pd, ldb);
+						goto MarkDense;
+					}
+
+					if (ec.isLarge()) {
+						if (!markLarge(pd, gcCycle)) {
+							continue;
+						}
+
+						/*
+						auto capacity = e.usedCapacity;
+						/*/
+						auto capacity = e.size;
+						// */
+						if (!pd.containsPointers || capacity < PointerSize) {
+							continue;
+						}
+
+						auto range = makeRange(e.address, e.address + capacity);
+
+						// Make sure we do not starve ourselves. If we do not have
+						// work in advance, then just keep some of it for ourselves.
+						if (DepthFirst && cursor == 0) {
+							worklist[cursor++] = WorkItem.extractFromRange(range);
+						}
+
+						scanner.addToWorkList(range);
+						continue;
+					}
+
+					auto se = SlabEntry(pd, ptr);
+					if (!markSparse(pd, se.index, gcCycle)) {
 						continue;
 					}
 
@@ -621,89 +890,18 @@ public:
 						continue;
 					}
 
-					auto slotSize = ldb.slotSize;
-					auto i = WorkItem(base + index * slotSize, slotSize);
-					if (DepthFirst) {
-						scanBreadthFirst(i, cache);
-						continue;
-					}
-
-					if (likely(cursor < WorkListCapacity)) {
-						worklist[cursor++] = i;
-						continue;
-					}
-
-					scanner.work.addToWorkList(worklist[0 .. WorkListCapacity]);
-
-					cursor = 1;
-					worklist[0] = i;
-					continue;
-				}
-
-				auto aptr = alignDown(ptr, PageSize);
-				auto pd = emap.lookup(aptr);
-
-				auto e = pd.extent;
-				if (e is null) {
-					// We have no mapping here, move on.
-					continue;
-				}
-
-				auto ec = pd.extentClass;
-				if (ec.dense) {
-					assert(e !is cache.pageDescriptor.extent);
-
-					auto ldb = binInfos[ec.sizeClass];
-					auto lds = AddressRange(aptr - pd.index * PageSize,
-					                        ldb.npages * PageSize);
-
-					cache = LastDenseSlabCache(lds, pd, ldb);
-					goto MarkDense;
-				}
-
-				if (ec.isLarge()) {
-					if (!markLarge(pd, gcCycle)) {
-						continue;
-					}
-
-					/*
-					auto capacity = e.usedCapacity;
-					/*/
-					auto capacity = e.size;
-					// */
-					if (!pd.containsPointers || capacity < PointerSize) {
-						continue;
-					}
-
-					auto range = makeRange(e.address, e.address + capacity);
-
 					// Make sure we do not starve ourselves. If we do not have
 					// work in advance, then just keep some of it for ourselves.
+					auto i = WorkItem(se.computeRange());
 					if (DepthFirst && cursor == 0) {
-						worklist[cursor++] = WorkItem.extractFromRange(range);
+						worklist[cursor++] = i;
+					} else {
+						scanner.addToWorkList(i);
 					}
-
-					scanner.addToWorkList(range);
-					continue;
 				}
 
-				auto se = SlabEntry(pd, ptr);
-				if (!markSparse(pd, se.index, gcCycle)) {
-					continue;
-				}
-
-				if (!pd.containsPointers) {
-					continue;
-				}
-
-				// Make sure we do not starve ourselves. If we do not have
-				// work in advance, then just keep some of it for ourselves.
-				auto i = WorkItem(se.computeRange());
-				if (DepthFirst && cursor == 0) {
-					worklist[cursor++] = i;
-				} else {
-					scanner.addToWorkList(i);
-				}
+				// stopping condition TODO: make this less hard-coded.
+				if(validPtrs.length < 57) break;
 			}
 
 			// In case we reached our limit, we bail. This ensures that
@@ -731,7 +929,6 @@ private:
 			return false;
 		}
 
-		auto ec = pd.extentClass;
 		return e.markDenseSlot(index);
 	}
 

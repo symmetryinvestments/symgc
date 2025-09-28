@@ -93,7 +93,7 @@ bool contains(const(void*)[] range, const void* ptr) {
 struct AddressRange {
 private:
 	ptrdiff_t base;
-	size_t length;
+	size_t _length;
 
 public:
 	@property
@@ -103,7 +103,7 @@ public:
 
 	this(const void* ptr, size_t size) {
 		base = -(cast(ptrdiff_t) ptr);
-		length = size;
+		_length = size;
 	}
 
 	this(const void[] range) {
@@ -116,26 +116,28 @@ public:
 
 	bool contains(const void* ptr) const {
 		auto iptr = cast(size_t) ptr;
-		return (iptr + base) < length;
+		return (iptr + base) < _length;
 	}
 
 	auto merge(AddressRange other) const {
-		if (length == 0) {
+		if (_length == 0) {
 			return other;
 		}
 
-		if (other.length == 0) {
+		if (other._length == 0) {
 			return this;
 		}
 
-		auto top = max(length - base, other.length - other.base);
+		auto top = max(_length - base, other._length - other.base);
 
 		AddressRange ret;
 		ret.base = max(base, other.base);
-		ret.length = top + ret.base;
+		ret._length = top + ret.base;
 
 		return ret;
 	}
+
+	@property size_t length() => _length;
 }
 
 @"AddressRange" unittest {
