@@ -484,6 +484,12 @@ private:
 		usedPageCount.fetchAdd(delta);
 		e.growBy(delta);
 
+		// Need to commit all pages that were previously uncommitted, but are
+		// *before* the final block. This might include pages already committed,
+		// but that operation is allowed.
+		import d.gc.memmap;
+		pages_commit(address, extraBlocks * BlockSize);
+
 		return true;
 	}
 
