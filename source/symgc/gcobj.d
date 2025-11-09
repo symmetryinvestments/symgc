@@ -429,13 +429,12 @@ final class SnazzyGC : GC
 
 	void cleanupThread(ThreadBase t) nothrow @nogc
 	{
-		// set up the thread to point at our thread cache;
 		import d.gc.tcache;
 		if (t.tlsGCData is &threadCache)
 		{
+			// called from the current thread.
 			import d.gc.thread;
 			(cast(void function() nothrow @nogc)&destroyThread)();
-			t.tlsGCData = null;
 		}
 	}
 

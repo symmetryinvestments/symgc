@@ -76,43 +76,26 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 	{
 		auto tc = cast(ThreadCache*) t.tlsGCData();
 
+		if (tc is null) {
+			assert(0, "tlsGCData was not set for this thread!");
+		}
 		version (Posix)
 		{
 			// determine if this thread is suspended or should be suspended.
-			if (tc !is null)
-			{
-				auto ss = tc.suspendState;
+			auto ss = tc.suspendState;
 
-				suspended += ss == SuspendState.Suspended;
-				retry |= ss != SuspendState.Suspended;
+			suspended += ss == SuspendState.Suspended;
+			retry |= ss != SuspendState.Suspended;
 
-				if (ss != SuspendState.None)
-					continue;
+			if (ss != SuspendState.None)
+				continue;
 
-				tc.sendSuspendSignal();
-				// use druntime suspension calls.
-				core_thread_osthread_suspend(t);
-			}
-			else
-			{
-				// TODO: remove this code, once we have guarantees the tls gc data
-				// is always initialized when attaching a thread.
-				retry = true;
-				if (alwaysSignal)
-				{
-					// send the signal directly, this is the first time through the
-					// loop. The thread signal handler will register the
-					// threadcache data for subsequent collections and loops
-					core_thread_osthread_suspend(t);
-				}
-			}
+			tc.sendSuspendSignal();
+			// use druntime suspension calls.
+			core_thread_osthread_suspend(t);
 		}
 		else version(Windows)
 		{
-			if (tc is null) {
-				assert(0, "tlsGCData was not set for this thread!");
-			}
-
 			// use the same states to make the code consistent.
 			tc.sendSuspendSignal();
 
