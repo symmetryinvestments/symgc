@@ -62,11 +62,17 @@ void createThread(bool BackgroundThread)() {
 
 void destroyThread() {
 	/**
-	 * Note: we are about to remove the thread from the active thread
-	 * list, we do not want to suspend, because the thread will never be
-	 * woken up. Therefore -- no exitBusyState.
+	 * Note: when symgc controls thread pausing, we do not want to suspend
+	 * because we are about to remove the thread from the managed threads list.
+	 * However, when druntime controls the list of threads to suspend, we
+	 * always want to suspend, since that race is handled there. Therefore, for
+	 * pthread hook, no exit busy state.
 	 */
 	enterBusyState();
+
+	version(Symgc_pthread_hook) {} else {
+		scope(exit) exitBusyState();
+	}
 
 	threadCache.destroyThread();
 
