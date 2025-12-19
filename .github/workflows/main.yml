@@ -20,8 +20,11 @@ jobs:
           - {os: ubuntu-latest,     dc: dmd-2.111.0}
           - {os: ubuntu-latest,     dc: dmd-master}
           - {os: ubuntu-latest,     dc: ldc-1.41.0}
+          - {os: ubuntu-latest,     dc: ldc-beta}
           - {os: ubuntu-24.04-arm,  dc: ldc-1.41.0}
+          - {os: ubuntu-24.04-arm,  dc: ldc-beta}
           - {os: windows-latest,    dc: dmd-master}
+          - {os: windows-latest,    dc: ldc-beta}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
