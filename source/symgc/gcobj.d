@@ -555,7 +555,8 @@ size_t hook_getArrayCapacity(void[] slice) {
 
 pragma(mangle, "__sd_gc_hook_get_allocation_slice")
 void[] hook_getAllocationSlice(const void* ptr) {
-	return threadCache.getAllocationSlice(ptr);
+	auto slice = threadCache.getAllocationSlice(ptr);
+	return slice[0 .. $ > 0 ? $-1 : 0]; // remove padding byte
 }
 
 pragma(mangle, "__sd_gc_hook_shrink_array_used")
