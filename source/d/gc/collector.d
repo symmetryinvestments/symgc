@@ -189,7 +189,8 @@ private:
 	uint disableCount;
 
 	// This makes for a 32MB default target.
-	enum DefaultHeapSize = 32 * 1024 * 1024 / PageSize;
+	enum DefaultMinHeapSize = 32 * 1024 * 1024 / PageSize;
+	enum DefaultMaxHeapSize = AddressSpace / PageSize;
 
 	/**
 	 * Data about the last collection cycle.
@@ -201,21 +202,22 @@ private:
 	 */
 	ulong amortizedDuration;
 
-	size_t amortizedHeapSize = DefaultHeapSize;
-	size_t peakHeapSize = DefaultHeapSize;
+	size_t amortizedHeapSize = DefaultMinHeapSize;
+	size_t peakHeapSize = DefaultMinHeapSize;
 
 	/**
 	 * Track the targets to meet before collecting.
 	 */
-	ulong lastTargetAdjustement;
+	ulong lastTargetAdjustment;
 
-	size_t nextTarget = DefaultHeapSize;
+	size_t nextTarget = DefaultMinHeapSize;
 
 	/**
 	 * Configuration.
 	 */
 	// Do not try to collect bellow this heap size.
-	size_t minHeapSize = DefaultHeapSize;
+	size_t minHeapSize = DefaultMinHeapSize;
+	size_t maxHeapSize = DefaultMaxHeapSize;
 
 	// Decay by 12.5% per time interval.
 	ubyte lgTargetDecay = 3;
@@ -272,20 +274,22 @@ private:
 
 	bool needCollection() {
 		auto now = getMonotonicTime();
-		auto interval =
-			max(lastCollectionInfo.stop - lastCollectionInfo.start, 100 * Millisecond);
+		auto interval = max(amortizedDuration, 100 * Millisecond);
 
-		int i = 0;
-		while (now - lastTargetAdjustement >= interval) {
+		while (now - lastTargetAdjustment >= interval) {
 			auto delta = nextTarget - lastCollectionInfo.usedPages;
 			delta -= delta >> lgTargetDecay;
 			delta += lastCollectionInfo.usedPages >> (lgTargetDecay + lgMinOverhead);
-			if(lastCollectionInfo.usedPages + delta == nextTarget) {
+
+			auto newTarget = lastCollectionInfo.usedPages + delta;
+			if (newTarget == nextTarget) {
+				// Limit reached.
+				lastTargetAdjustment = now;
 				break;
 			}
-			nextTarget = lastCollectionInfo.usedPages + delta;
 
-			lastTargetAdjustement += interval;
+			lastTargetAdjustment += interval;
+			nextTarget = newTarget;
 		}
 
 		if (disableCount > 0) {
@@ -329,8 +333,13 @@ private:
 		target = max(target, tbaseline);
 		target = min(target, tpeak);
 
-		lastTargetAdjustement = lastCollectionInfo.stop;
-		nextTarget = max(target, minHeapSize);
+		// Clamp the target based on configuration.
+		target = max(target, minHeapSize);
+		target = min(target, maxHeapSize);
+
+		// Update target.
+		lastTargetAdjustment = lastCollectionInfo.stop;
+		nextTarget = target;
 	}
 
 	uint disableAutomaticCollectionsImpl() {
