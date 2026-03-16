@@ -174,6 +174,10 @@ void setScanningThreads(uint nThreads) {
 	gCollectorState.setScanningThreads(nThreads);
 }
 
+void setHeapSizeLimit(size_t limit) {
+	gCollectorState.setHeapSizeLimit(limit);
+}
+
 CollectionInfo lastCollectionInfo() {
 	gCollectorState.mutex.lock();
 	scope(exit) gCollectorState.mutex.unlock();
@@ -244,6 +248,13 @@ public:
 		scope(exit) mutex.unlock();
 
 		(cast(CollectorState*) &this).scanningThreads = nThreads;
+	}
+
+	void setHeapSizeLimit(size_t limit) shared {
+		mutex.lock();
+		scope(exit) mutex.unlock();
+
+		(cast(CollectorState*) &this).maxHeapSize = limit / PageSize;
 	}
 
 	uint disableAutomaticCollections() shared {

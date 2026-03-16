@@ -116,6 +116,13 @@ private GC initializeQuiet()
 		import d.gc.collector;
 		setScanningThreads(config.parallel + 1);
 	}
+
+	static if (is(typeof(config.heapSizeLimit)))
+	{
+		import d.gc.collector;
+		setHeapSizeLimit(config.heapSizeLimit);
+	}
+
 	return instance;
 }
 
