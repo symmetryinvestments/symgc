@@ -36,11 +36,9 @@ void prepareStack() {
 	clobber();
 }
 
-// TODO: figure out why 10_001 are needed to make this work instead of 10_000.
-enum objCount = 10_001;
+enum objCount = 10_000;
 
-shared static ~this() {
-	// make sure we clobber the stack
+void collectFinalizers() {
 	prepareStack();
 	import core.memory;
 	GC.collect();
@@ -48,9 +46,17 @@ shared static ~this() {
 }
 
 void main() {
-	foreach(i; 0 .. objCount)
-	{
-		new Finalized();
-	}
+	// Allocate on a worker so conservative stack scanning cannot retain the
+	// final allocation through a stale pointer in main's stack frame.
+	import core.thread : Thread;
+	auto allocator = new Thread({
+		foreach(i; 0 .. objCount)
+		{
+			new Finalized();
+		}
+		__sd_gc_tl_flush_cache();
+	});
+	allocator.start();
+	allocator.join();
+	collectFinalizers();
 }
-
