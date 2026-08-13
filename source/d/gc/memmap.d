@@ -96,8 +96,17 @@ void pages_commit(void* addr, size_t size) {
 			return;
 		}
 		auto ret = VirtualAlloc(addr, size, MEM_COMMIT, PAGE_READWRITE);
-		assert(ret !is null, "Could not commit memory!");
-		assert(ret is addr, "MEM_COMMIT moved alloction!");
+		if (ret !is null) {
+			assert(ret is addr, "MEM_COMMIT moved alloction!");
+			return;
+		}
+
+		if (applyPerReservation(VmOp.commit, addr, size)) {
+			return;
+		}
+
+		reportVmFailure("MEM_COMMIT", addr, size);
+		assert(false, "Could not commit memory!");
 	}
 	// linux does not need explicit commit
 }
@@ -268,7 +277,30 @@ void pages_purge(void* addr, size_t size) {
 		auto ret = madvise(addr, size, MADV_DONTNEED);
 		assert(ret == 0, "madvise failed!");
 	} else version(Windows) {
-		VirtualFree(addr, size, MEM_DECOMMIT);
+		/**
+		 * This used to discard the result. A decommit that straddles two
+		 * reservations fails with ERROR_INVALID_PARAMETER and leaves the pages
+		 * committed, so the failure is invisible while commit charge keeps
+		 * climbing -- which eventually shows up as a commit failure somewhere
+		 * unrelated. Report it rather than assert, so diagnosing this cannot
+		 * itself take a process down.
+		 */
+		if (VirtualFree(addr, size, MEM_DECOMMIT)) {
+			return;
+		}
+
+		if (applyPerReservation(VmOp.decommit, addr, size)) {
+			return;
+		}
+
+		/**
+		 * This used to discard the result entirely. A decommit that fails
+		 * leaves the pages committed, so the failure is invisible while commit
+		 * charge keeps climbing, and it eventually surfaces as a commit
+		 * failure somewhere unrelated. Report it rather than assert, so
+		 * diagnosing this cannot itself take a process down.
+		 */
+		reportVmFailure("MEM_DECOMMIT", addr, size);
 	}
 }
 
@@ -277,7 +309,17 @@ void pages_purge_lazy(void* addr, size_t size) {
 		auto ret = madvise(addr, size, MADV_FREE);
 		assert(ret == 0, "madvise failed!");
 	} else version (Windows) {
-		VirtualAlloc(addr, size, MEM_RESET, PAGE_READWRITE);
+		// MEM_RESET is rejected across a reservation boundary too, with
+		// ERROR_INVALID_ADDRESS. Same silent-failure risk as pages_purge.
+		if (VirtualAlloc(addr, size, MEM_RESET, PAGE_READWRITE) !is null) {
+			return;
+		}
+
+		if (applyPerReservation(VmOp.reset, addr, size)) {
+			return;
+		}
+
+		reportVmFailure("MEM_RESET", addr, size);
 	}
 }
 
