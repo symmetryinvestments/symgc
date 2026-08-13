@@ -178,15 +178,16 @@ version(Windows) {
 	 */
 	bool applyPerReservation(VmOp op, void* addr, size_t size) nothrow @nogc {
 		auto p = cast(ubyte*) addr;
-		auto end = p + size;
+		auto left = size;
 
-		while (p < end) {
-			auto chunk = reservationExtent(p, end - p);
+		while (left > 0) {
+			auto chunk = reservationExtent(p, left);
 			if (chunk == 0 || !applyOp(op, p, chunk)) {
 				return false;
 			}
 
 			p += chunk;
+			left -= chunk;
 		}
 
 		return true;
