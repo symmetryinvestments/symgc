@@ -321,7 +321,28 @@ public:
 			return;
 		}
 
-		auto pd = getPageDescriptor(ptr);
+		// GC.free must take no action when called from a finalizer. The page
+		// collector invokes finalizers while holding its page-filler mutex, so
+		// returning a slot through a thread bin here can also deadlock by
+		// re-entering the same page filler.
+		if (inFinalizer) {
+			return;
+		}
+
+		// GC.free also ignores pointers not owned by this collector and pointers
+		// into the interior of an allocation.
+		auto pd = maybeGetPageDescriptor(ptr);
+		if (pd.extent is null) {
+			return;
+		}
+		if (pd.isSlab()) {
+			auto si = SlabAllocInfo(pd, ptr);
+			if (ptr !is si.address) {
+				return;
+			}
+		} else if (ptr !is pd.extent.address) {
+			return;
+		}
 		free(pd, ptr);
 	}
 
