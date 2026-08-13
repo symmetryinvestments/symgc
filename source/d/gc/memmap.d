@@ -205,7 +205,7 @@ version(Windows) {
 }
 
 version(Windows)
-unittest {
+@"applyPerReservation" unittest {
 	// Two adjacent but separate reservations, which is what the region
 	// allocator can produce by merging neighbours: take a span, release it,
 	// then re-reserve each half on its own.
