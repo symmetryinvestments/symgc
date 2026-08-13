@@ -96,10 +96,170 @@ void pages_commit(void* addr, size_t size) {
 			return;
 		}
 		auto ret = VirtualAlloc(addr, size, MEM_COMMIT, PAGE_READWRITE);
-		assert(ret !is null, "Could not commit memory!");
-		assert(ret is addr, "MEM_COMMIT moved alloction!");
+		if (ret !is null) {
+			assert(ret is addr, "MEM_COMMIT moved alloction!");
+			return;
+		}
+
+		if (applyPerReservation(VmOp.commit, addr, size)) {
+			return;
+		}
+
+		reportVmFailure("MEM_COMMIT", addr, size);
+		assert(false, "Could not commit memory!");
 	}
 	// linux does not need explicit commit
+}
+
+version(Windows) {
+	/**
+	 * How far the reservation containing addr extends, capped at maxLen.
+	 *
+	 * MEMORY_BASIC_INFORMATION describes a run of pages in the same state
+	 * rather than a whole reservation, so walk forward until AllocationBase
+	 * changes. If the range does not cross a boundary this returns maxLen on
+	 * the first iteration.
+	 */
+	size_t reservationExtent(void* addr, size_t maxLen) nothrow @nogc {
+		MEMORY_BASIC_INFORMATION mbi;
+		if (VirtualQuery(addr, &mbi, mbi.sizeof) == 0) {
+			// Cannot tell; let the caller attempt the range unsplit.
+			return maxLen;
+		}
+
+		auto allocBase = mbi.AllocationBase;
+		auto start = cast(ubyte*) addr;
+		auto end = start + maxLen;
+
+		while (true) {
+			auto regionEnd = cast(ubyte*) mbi.BaseAddress + mbi.RegionSize;
+			if (regionEnd >= end) {
+				return maxLen;
+			}
+
+			if (VirtualQuery(regionEnd, &mbi, mbi.sizeof) == 0
+				    || mbi.AllocationBase !is allocBase) {
+				return regionEnd - start;
+			}
+		}
+	}
+
+	enum VmOp {
+		commit,
+		decommit,
+		reset,
+	}
+
+	bool applyOp(VmOp op, void* addr, size_t size) nothrow @nogc {
+		final switch (op) {
+			case VmOp.commit:
+				return VirtualAlloc(addr, size, MEM_COMMIT, PAGE_READWRITE)
+					!is null;
+
+			case VmOp.decommit:
+				return VirtualFree(addr, size, MEM_DECOMMIT) != 0;
+
+			case VmOp.reset:
+				return VirtualAlloc(addr, size, MEM_RESET, PAGE_READWRITE)
+					!is null;
+		}
+	}
+
+	/**
+	 * Windows rejects a commit, decommit or reset that crosses from one
+	 * reservation into another, but the region allocator merges adjacent
+	 * regions without recording which reservation each came from, so a range
+	 * handed down here can legitimately straddle two. Rather than forbid that
+	 * merge -- coalescing neighbours is worth keeping -- the OS constraint is
+	 * handled where it belongs, by splitting the operation on the boundary.
+	 *
+	 * Callers try the whole range first, so this only runs in the rare case
+	 * where that failed and costs nothing in the common one.
+	 */
+	bool applyPerReservation(VmOp op, void* addr, size_t size) nothrow @nogc {
+		auto p = cast(ubyte*) addr;
+		auto left = size;
+
+		while (left > 0) {
+			auto chunk = reservationExtent(p, left);
+			if (chunk == 0 || !applyOp(op, p, chunk)) {
+				return false;
+			}
+
+			p += chunk;
+			left -= chunk;
+		}
+
+		return true;
+	}
+
+	/// The error code is the only way to tell these failures apart, and it was
+	/// previously discarded.
+	void reportVmFailure(const(char)* op, void* addr, size_t size) nothrow @nogc {
+		auto err = GetLastError();
+
+		import core.stdc.stdio;
+		fprintf(stderr, "symgc: %s failed for [%p, %p) (%llu bytes), error %u\n",
+		        op, addr, cast(ubyte*) addr + size, cast(ulong) size, err);
+		fflush(stderr);
+	}
+}
+
+version(Windows)
+@"applyPerReservation" unittest {
+	// Two adjacent but separate reservations, which is what the region
+	// allocator can produce by merging neighbours: take a span, release it,
+	// then re-reserve each half on its own.
+	enum Half = 4 * 1024 * 1024;
+
+	auto probe = VirtualAlloc(null, 2 * Half, MEM_RESERVE, PAGE_READWRITE);
+	assert(probe !is null, "Could not reserve probe span!");
+	VirtualFree(probe, 0, MEM_RELEASE);
+
+	auto a = VirtualAlloc(probe, Half, MEM_RESERVE, PAGE_READWRITE);
+	if (a is null) {
+		// Something else claimed the range in between; nothing to test.
+		return;
+	}
+
+	auto b = VirtualAlloc(cast(ubyte*) probe + Half, Half, MEM_RESERVE,
+	                      PAGE_READWRITE);
+	if (b is null) {
+		VirtualFree(a, 0, MEM_RELEASE);
+		return;
+	}
+
+	scope(exit) {
+		VirtualFree(a, 0, MEM_RELEASE);
+		VirtualFree(b, 0, MEM_RELEASE);
+	}
+
+	// Straddle the boundary: start halfway through the first reservation and
+	// run halfway into the second.
+	auto straddle = cast(ubyte*) a + Half / 2;
+
+	// A single call cannot do this. MEM_COMMIT and MEM_RESET report
+	// ERROR_INVALID_ADDRESS, MEM_DECOMMIT reports ERROR_INVALID_PARAMETER.
+	assert(VirtualAlloc(straddle, Half, MEM_COMMIT, PAGE_READWRITE) is null,
+	       "MEM_COMMIT across a reservation boundary should fail!");
+	assert(applyPerReservation(VmOp.commit, straddle, Half),
+	       "Split commit should succeed!");
+
+	assert(VirtualFree(straddle, Half, MEM_DECOMMIT) == 0,
+	       "MEM_DECOMMIT across a reservation boundary should fail!");
+	assert(applyPerReservation(VmOp.decommit, straddle, Half),
+	       "Split decommit should succeed!");
+
+	assert(applyPerReservation(VmOp.commit, straddle, Half),
+	       "Split recommit should succeed!");
+	assert(VirtualAlloc(straddle, Half, MEM_RESET, PAGE_READWRITE) is null,
+	       "MEM_RESET across a reservation boundary should fail!");
+	assert(applyPerReservation(VmOp.reset, straddle, Half),
+	       "Split reset should succeed!");
+
+	// A range inside one reservation must still go through unsplit.
+	assert(applyPerReservation(VmOp.commit, a, Half / 2),
+	       "Commit within a single reservation should succeed!");
 }
 
 void pages_unmap(void* addr, size_t size) {
@@ -118,7 +278,30 @@ void pages_purge(void* addr, size_t size) {
 		auto ret = madvise(addr, size, MADV_DONTNEED);
 		assert(ret == 0, "madvise failed!");
 	} else version(Windows) {
-		VirtualFree(addr, size, MEM_DECOMMIT);
+		/**
+		 * This used to discard the result. A decommit that straddles two
+		 * reservations fails with ERROR_INVALID_PARAMETER and leaves the pages
+		 * committed, so the failure is invisible while commit charge keeps
+		 * climbing -- which eventually shows up as a commit failure somewhere
+		 * unrelated. Report it rather than assert, so diagnosing this cannot
+		 * itself take a process down.
+		 */
+		if (VirtualFree(addr, size, MEM_DECOMMIT)) {
+			return;
+		}
+
+		if (applyPerReservation(VmOp.decommit, addr, size)) {
+			return;
+		}
+
+		/**
+		 * This used to discard the result entirely. A decommit that fails
+		 * leaves the pages committed, so the failure is invisible while commit
+		 * charge keeps climbing, and it eventually surfaces as a commit
+		 * failure somewhere unrelated. Report it rather than assert, so
+		 * diagnosing this cannot itself take a process down.
+		 */
+		reportVmFailure("MEM_DECOMMIT", addr, size);
 	}
 }
 
@@ -127,7 +310,17 @@ void pages_purge_lazy(void* addr, size_t size) {
 		auto ret = madvise(addr, size, MADV_FREE);
 		assert(ret == 0, "madvise failed!");
 	} else version (Windows) {
-		VirtualAlloc(addr, size, MEM_RESET, PAGE_READWRITE);
+		// MEM_RESET is rejected across a reservation boundary too, with
+		// ERROR_INVALID_ADDRESS. Same silent-failure risk as pages_purge.
+		if (VirtualAlloc(addr, size, MEM_RESET, PAGE_READWRITE) !is null) {
+			return;
+		}
+
+		if (applyPerReservation(VmOp.reset, addr, size)) {
+			return;
+		}
+
+		reportVmFailure("MEM_RESET", addr, size);
 	}
 }
 
