@@ -250,7 +250,7 @@ final class SnazzyGC : GC
 	size_t reserve(size_t size) nothrow
 	{
 		// Our GC does not support reserving memory from the OS. In practice,
-		// this would not work anyway, as all preallocated mdmory would be handed
+		// this would not work anyway, as all preallocated memory would be handed
 		// back to the OS on the next collect.
 		return 0;
 	}
@@ -485,7 +485,7 @@ void *sdcAllocate(size_t size, uint bits, bool zeroData, const TypeInfo ti) noth
 // For a function __sd_gc_hook_foo_bar, we will name it hook_fooBar, and use pragma
 // mangle to get the right symbol name.
 //
-// Hoooks that already exist as part of the C api are not implemented here, but
+// Hooks that already exist as part of the C api are not implemented here, but
 // instead in d.gc.capi.
 
 import d.gc.tcache;
