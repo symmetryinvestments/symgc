@@ -260,6 +260,13 @@ final class SnazzyGC : GC
 	 */
 	void free(void* p) nothrow @nogc
 	{
+		if (inFinalizer) {
+			// In order to avoid a double free when GC.free is called on an
+			// allocation that is about to be collected, we turn GC.free into
+			// a no-op when it is called from a finalizer.
+			return;
+		}
+
 		// Note: p is not supposed to be freed if it is an interior pointer,
 		// but it is freed in SDC in this case.
 		__sd_gc_free(p);
