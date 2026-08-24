@@ -120,7 +120,12 @@ public:
 
 		enum BlockDescriptorSize = alignUp(BlockDescriptor.sizeof, CacheLine);
 		enum Count = PageSize / BlockDescriptorSize;
-		static assert(Count == 21, "Unexpected BlockDescriptor size!");
+		version(OSX) {
+			// 16k pages host more, smaller descriptors per page.
+			static assert(Count == 128, "Unexpected BlockDescriptor size!");
+		} else {
+			static assert(Count == 21, "Unexpected BlockDescriptor size!");
+		}
 
 		UnusedBlockHeap ret;
 		foreach (i; 0 .. Count) {
@@ -429,15 +434,28 @@ ptrdiff_t priorityBlockCmp(BlockDescriptor* lhs, BlockDescriptor* rhs) {
 	assert(heap.top is &block2);
 
 	// More allocation remains a tie breaker.
-	auto block3 = makeBlock(0, 500);
-	heap.insert(&block3);
-	assert(heap.top is &block3);
+	version(OSX) {
+		// Blocks only host 128 pages, keep the score within range.
+		auto block3 = makeBlock(0, 125);
+		heap.insert(&block3);
+		assert(heap.top is &block3);
 
-	// Try inserting a few blocks out of order.
-	auto block4 = makeBlock(0, 100);
-	auto block5 = makeBlock(250, 1);
-	auto block6 = makeBlock(250, 300);
-	auto block7 = makeBlock(100, 300);
+		// Try inserting a few blocks out of order.
+		auto block4 = makeBlock(0, 25);
+		auto block5 = makeBlock(62, 1);
+		auto block6 = makeBlock(62, 75);
+		auto block7 = makeBlock(25, 75);
+	} else {
+		auto block3 = makeBlock(0, 500);
+		heap.insert(&block3);
+		assert(heap.top is &block3);
+
+		// Try inserting a few blocks out of order.
+		auto block4 = makeBlock(0, 100);
+		auto block5 = makeBlock(250, 1);
+		auto block6 = makeBlock(250, 300);
+		auto block7 = makeBlock(100, 300);
+	}
 	heap.insert(&block4);
 	heap.insert(&block5);
 	heap.insert(&block6);
@@ -526,32 +544,32 @@ ptrdiff_t unusedBlockDescriptorCmp(BlockDescriptor* lhs, BlockDescriptor* rhs) {
 		checkReserve(4, 4 * i, i > 4);
 	}
 
-	checkRangeState(PagesInBlock / 4, PagesInBlock, 512, 0);
+	checkRangeState(PagesInBlock / 4, PagesInBlock, PagesInBlock, 0);
 
 	// Release in the middle.
 	block.release(100, 4);
-	checkRangeState(PagesInBlock / 4 - 1, PagesInBlock - 4, 512, 4);
+	checkRangeState(PagesInBlock / 4 - 1, PagesInBlock - 4, PagesInBlock, 4);
 
 	// Release just before and after.
 	block.release(104, 4);
-	checkRangeState(PagesInBlock / 4 - 2, PagesInBlock - 8, 512, 8);
+	checkRangeState(PagesInBlock / 4 - 2, PagesInBlock - 8, PagesInBlock, 8);
 
 	block.release(96, 4);
-	checkRangeState(PagesInBlock / 4 - 3, PagesInBlock - 12, 512, 12);
+	checkRangeState(PagesInBlock / 4 - 3, PagesInBlock - 12, PagesInBlock, 12);
 
 	// Release futher along and then bridge.
 	block.release(112, 4);
-	checkRangeState(PagesInBlock / 4 - 4, PagesInBlock - 16, 512, 12);
+	checkRangeState(PagesInBlock / 4 - 4, PagesInBlock - 16, PagesInBlock, 12);
 
 	block.release(108, 4);
-	checkRangeState(PagesInBlock / 4 - 5, PagesInBlock - 20, 512, 20);
+	checkRangeState(PagesInBlock / 4 - 5, PagesInBlock - 20, PagesInBlock, 20);
 
 	// Release first and last.
 	block.release(0, 4);
-	checkRangeState(PagesInBlock / 4 - 6, PagesInBlock - 24, 512, 20);
+	checkRangeState(PagesInBlock / 4 - 6, PagesInBlock - 24, PagesInBlock, 20);
 
 	block.release(PagesInBlock - 4, 4);
-	checkRangeState(PagesInBlock / 4 - 7, PagesInBlock - 28, 512, 20);
+	checkRangeState(PagesInBlock / 4 - 7, PagesInBlock - 28, PagesInBlock, 20);
 }
 
 @"clear" unittest {
@@ -572,40 +590,80 @@ ptrdiff_t unusedBlockDescriptorCmp(BlockDescriptor* lhs, BlockDescriptor* rhs) {
 	}
 
 	// First allocation.
-	checkReserve(200, 0, true);
-	checkRangeState(1, 200, 200, PagesInBlock - 200);
+	version(OSX) {
+		// 16k page systems host 128 pages per block, scale the
+		// exact-fill arithmetic accordingly.
+		checkReserve(50, 0, true);
+		checkRangeState(1, 50, 50, PagesInBlock - 50);
 
-	// Second allocation:
-	checkReserve(100, 200, true);
-	checkRangeState(2, 300, 300, PagesInBlock - 300);
+		// Second allocation:
+		checkReserve(25, 50, true);
+		checkRangeState(2, 75, 75, PagesInBlock - 75);
 
-	// Third allocation, and we're full:
-	checkReserve(212, 300, true);
-	checkRangeState(3, 512, 512, 0);
+		// Third allocation, and we're full:
+		checkReserve(53, 75, true);
+		checkRangeState(3, 128, 128, 0);
 
-	// Shrink the first allocation, make lfr of 100.
-	block.clear(100, 100);
-	checkRangeState(3, 412, 512, PagesInBlock - 412);
+		// Shrink the first allocation, make lfr of 25.
+		block.clear(25, 25);
+		checkRangeState(3, 103, 128, PagesInBlock - 103);
 
-	// Shrink the second allocation, lfr is still 100.
-	block.clear(299, 1);
-	checkRangeState(3, 411, 512, PagesInBlock - 412);
+		// Shrink the second allocation, lfr is still 25.
+		block.clear(74, 1);
+		checkRangeState(3, 102, 128, PagesInBlock - 103);
 
-	// Shrink the third allocation, lfr is still 100.
-	block.clear(500, 12);
-	checkRangeState(3, 399, 512, PagesInBlock - 412);
+		// Shrink the third allocation, lfr is still 25.
+		block.clear(125, 3);
+		checkRangeState(3, 99, 128, PagesInBlock - 103);
 
-	// Release the third allocation.
-	block.release(300, 200);
-	checkRangeState(2, 199, 512, 213);
+		// Release the third allocation.
+		block.release(75, 50);
+		checkRangeState(2, 49, 128, 54);
 
-	// Release the second allocation.
-	block.release(200, 99);
-	checkRangeState(1, 100, 512, PagesInBlock - 100);
+		// Release the second allocation.
+		block.release(50, 24);
+		checkRangeState(1, 25, 128, PagesInBlock - 25);
 
-	// Release the first allocation.
-	block.release(0, 100);
-	checkRangeState(0, 0, 512, PagesInBlock);
+		// Release the first allocation.
+		block.release(0, 25);
+		checkRangeState(0, 0, 128, PagesInBlock);
+	} else {
+		// First allocation.
+		checkReserve(200, 0, true);
+		checkRangeState(1, 200, 200, PagesInBlock - 200);
+
+		// Second allocation:
+		checkReserve(100, 200, true);
+		checkRangeState(2, 300, 300, PagesInBlock - 300);
+
+		// Third allocation, and we're full:
+		checkReserve(212, 300, true);
+		checkRangeState(3, 512, 512, 0);
+
+		// Shrink the first allocation, make lfr of 100.
+		block.clear(100, 100);
+		checkRangeState(3, 412, 512, PagesInBlock - 412);
+
+		// Shrink the second allocation, lfr is still 100.
+		block.clear(299, 1);
+		checkRangeState(3, 411, 512, PagesInBlock - 412);
+
+		// Shrink the third allocation, lfr is still 100.
+		block.clear(500, 12);
+		checkRangeState(3, 399, 512, PagesInBlock - 412);
+
+		// Release the third allocation.
+		block.release(300, 200);
+		checkRangeState(2, 199, 512, 213);
+
+		// Release the second allocation.
+		block.release(200, 99);
+		checkRangeState(1, 100, 512, PagesInBlock - 100);
+
+		// Release the first allocation.
+		block.release(0, 100);
+		checkRangeState(0, 0, 512, PagesInBlock);
+	}
 }
 
 @"growAt" unittest {
@@ -627,9 +685,95 @@ ptrdiff_t unusedBlockDescriptorCmp(BlockDescriptor* lhs, BlockDescriptor* rhs) {
 
 	checkRangeState(0, 0, 0, PagesInBlock);
 
-	// First allocation.
-	checkReserve(64, 0, true);
-	checkRangeState(1, 64, 64, PagesInBlock - 64);
+	version(OSX) {
+		// 16k page systems host 128 pages per block, scale the
+		// exact-fill arithmetic accordingly.
+		// First allocation.
+		checkReserve(16, 0, true);
+		checkRangeState(1, 16, 16, PagesInBlock - 16);
+
+		// Grow it by 8 pages.
+		assert(block.growAt(16, 8));
+		checkRangeState(1, 24, 24, PagesInBlock - 24);
+
+		// Grow it by another 8 pages.
+		assert(block.growAt(24, 8));
+		checkRangeState(1, 32, 32, PagesInBlock - 32);
+
+		// Second allocation.
+		checkReserve(64, 32, true);
+		checkRangeState(2, 96, 96, PagesInBlock - 96);
+
+		// Try to grow the first allocation, but cannot, there is no space.
+		assert(!block.growAt(32, 1));
+		checkRangeState(2, 96, 96, PagesInBlock - 96);
+
+		// Third allocation.
+		checkReserve(32, 96, true);
+		checkRangeState(3, 128, 128, 0);
+
+		// Try to grow the second allocation, but cannot, there is no space.
+		assert(!block.growAt(96, 1));
+		checkRangeState(3, 128, 128, 0);
+
+		// Release first allocation.
+		block.release(0, 32);
+		checkRangeState(2, 96, 128, PagesInBlock - 96);
+
+		// Release third allocation.
+		block.release(96, 32);
+		checkRangeState(1, 64, 128, 32);
+
+		// There are now two equally 'longest length' free ranges.
+		// Grow the second allocation to see that lfr is recomputed properly.
+		assert(block.growAt(96, 1));
+		checkRangeState(1, 65, 128, 32);
+
+		// Make an allocation in the lfr, new lfr is after the second alloc.
+		checkReserve(32, 0, false);
+		checkRangeState(2, 97, 128, 31);
+
+		// Free the above allocation, lfr is 32 again.
+		block.release(0, 32);
+		checkRangeState(1, 65, 128, 32);
+
+		// Free the second allocation.
+		block.release(32, 65);
+		checkRangeState(0, 0, 128, PagesInBlock);
+
+		// Test with a full block:
+
+		// Make an allocation:
+		checkReserve(64, 0, false);
+		checkRangeState(1, 64, 128, PagesInBlock - 64);
+
+		// Make another allocation, filling block.
+		checkReserve(64, 64, false);
+		checkRangeState(2, 128, 128, 0);
+
+		// Try expanding the first one, but there is no space.
+		assert(!block.growAt(64, 1));
+		checkRangeState(2, 128, 128, 0);
+
+		// Release the first allocation.
+		block.release(0, 64);
+		checkRangeState(1, 64, 128, PagesInBlock - 64);
+
+		// Replace it with a shorter one.
+		checkReserve(62, 0, false);
+		checkRangeState(2, 126, 128, PagesInBlock - 126);
+
+		// Try to grow the above by 3, but cannot, this is one page too many.
+		assert(!block.growAt(62, 3));
+		checkRangeState(2, 126, 128, PagesInBlock - 126);
+
+		// Grow by 2 works, and fills block.
+		assert(block.growAt(62, 2));
+		checkRangeState(2, 128, 128, 0);
+	} else {
+		// First allocation.
+		checkReserve(64, 0, true);
+		checkRangeState(1, 64, 64, PagesInBlock - 64);
 
 	// Grow it by 32 pages.
 	assert(block.growAt(64, 32));
@@ -709,6 +853,7 @@ ptrdiff_t unusedBlockDescriptorCmp(BlockDescriptor* lhs, BlockDescriptor* rhs) {
 	// Grow by 6 works, and fills block.
 	assert(block.growAt(250, 6));
 	checkRangeState(2, 512, 512, 0);
+	}
 }
 
 @"track_dirty" unittest {

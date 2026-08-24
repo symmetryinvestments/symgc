@@ -83,7 +83,13 @@ bool isHugeSizeClass(uint sizeClass) {
 
 // Determine whether given size class supports metadata.
 bool sizeClassSupportsMetadata(uint sizeClass) {
-	return sizeClass > 0;
+	if (!isSmallSizeClass(sizeClass)) {
+		// All large size classes support metadata.
+		return true;
+	}
+
+	import d.gc.slab;
+	return binInfos[sizeClass].supportsMetadata;
 }
 
 @"sizeClassSupportsMetadata" unittest {
@@ -100,7 +106,13 @@ bool sizeClassSupportsMetadata(uint sizeClass) {
 
 // Determine whether given size class supports inline marking.
 bool sizeClassSupportsInlineMarking(uint sizeClass) {
-	return sizeClass > 2;
+	if (!isSmallSizeClass(sizeClass)) {
+		// All large size classes support inline marking.
+		return true;
+	}
+
+	import d.gc.slab;
+	return binInfos[sizeClass].supportsInlineMarking;
 }
 
 @"sizeClassSupportsInlineMarking" unittest {
@@ -118,8 +130,9 @@ bool sizeClassSupportsInlineMarking(uint sizeClass) {
 }
 
 bool isDenseSizeClass(uint sizeClass) {
-	enum Sieve = 1 << 15 | 1 << 19 | 1 << 21;
-	auto match = Sieve & (1 << sizeClass);
+	enum Sieve = cast(ulong) 1 << 15 | cast(ulong) 1 << 19
+		| cast(ulong) 1 << 21;
+	auto match = Sieve & (cast(ulong) 1 << sizeClass);
 	return !match && sizeClass < 23;
 }
 
@@ -129,15 +142,37 @@ bool isSparseSizeClass(uint sizeClass) {
 
 @"isDenseSizeClass" unittest {
 	auto bins = getBinInfos();
+
+	// The sieve is self-consistent.
 	foreach (sc; 0 .. ClassCount.Small) {
-		assert(isDenseSizeClass(sc) == bins[sc].dense);
-		assert(isSparseSizeClass(sc) == bins[sc].sparse);
+		assert(isDenseSizeClass(sc) != isSparseSizeClass(sc));
+	}
+
+	/**
+	 * The density proxy of the bin info follows the number of slots,
+	 * while the classification of allocations follows the sieve. The
+	 * two only coincide when the page size makes them do so, so we
+	 * verify each against its own definition here.
+	 */
+	foreach (sc; 0 .. ClassCount.Small) {
+		assert(bins[sc].dense == (bins[sc].nslots > 16));
+		assert(bins[sc].sparse == !bins[sc].dense);
 	}
 
 	// All large size classes are sparse.
 	foreach (sc; ClassCount.Small .. ClassCount.Total) {
 		assert(!isDenseSizeClass(sc));
 		assert(isSparseSizeClass(sc));
+	}
+
+	// Sparse slabs mark their slots in the sparse gcWord, which can
+	// track at most MaxSparseSlots slots. Everything beyond that could
+	// never be marked and would always be reclaimed by the collector.
+	foreach (sc; 0 .. ClassCount.Small) {
+		if (isSparseSizeClass(sc)) {
+			assert(bins[sc].nslots <= MaxSparseSlots,
+				"Sparse class with unmarkable slots!");
+		}
 	}
 }
 
@@ -213,7 +248,7 @@ size_t getSizeFromClass(uint sizeClass) {
 	}
 
 	auto largeSizeClass = sizeClass - ClassCount.Small;
-	auto shift = largeSizeClass / 4 + LgPageSize;
+	auto shift = largeSizeClass / 4 + LgSlabSize;
 	size_t bits = (largeSizeClass % 4) | 0x04;
 
 	auto ret = bits << shift;
@@ -275,6 +310,14 @@ auto getBinInfos() {
 		auto npages = computePageCount(slotSize, shift);
 		ushort slots = ((npages << LgPageSize) / s) & ushort.max;
 
+		// Sparse slabs cannot mark more slots than the sparse gcWord
+		// allows. On 16k page systems, the natural slot count of the
+		// sparse size classes may exceed that limit; cap it so every
+		// slot of the slab can be marked.
+		if (isSparseSizeClass(id) && slots > MaxSparseSlots) {
+			slots = MaxSparseSlots;
+		}
+
 		bins[id] = BinInfo(slotSize, shift, npages, slots);
 	});
 
@@ -309,7 +352,7 @@ auto getSmallClassCount() {
 	uint count = 0;
 
 	computeSizeClass((uint id, uint grp, uint delta, uint ndelta) {
-		if (delta < LgPageSize) {
+		if (delta < LgSlabSize) {
 			count++;
 		}
 	});
@@ -333,7 +376,7 @@ auto getLookupClassCount() {
 	uint count = 0;
 
 	computeSizeClass((uint id, uint grp, uint delta, uint ndelta) {
-		if (grp < LgPageSize) {
+		if (grp < LgSlabSize) {
 			count++;
 		}
 	});

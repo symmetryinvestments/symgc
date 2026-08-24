@@ -63,6 +63,7 @@ public:
 		_low_water = current;
 	}
 
+	
 	// Allocate without moving the low water mark.
 	bool allocateEasy(ref void* ptr) {
 		return allocateImpl!false(ptr);

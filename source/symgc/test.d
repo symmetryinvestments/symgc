@@ -5,8 +5,57 @@ version(Symgc_testing):
 
 public import symgc.thread : ThreadHandle, sched_yield;
 
+/**
+ * Fast unittest runner: reports failures as file(line): message without
+ * symbolicated stack traces. The default trace handler shells out to
+ * atos for every printed frame, which is prohibitively slow when a
+ * suite has many failures.
+ */
+shared static this() {
+	import core.runtime : Runtime;
+	Runtime.extendedModuleUnitTester = &fastUnitTestRunner;
+}
+
+private {
+	import core.runtime : UnitTestResult;
+
+	UnitTestResult fastUnitTestRunner() {
+		UnitTestResult results;
+
+		foreach (m; ModuleInfo) {
+			if (!m) {
+				continue;
+			}
+
+			auto fp = m.unitTest;
+			if (!fp) {
+				continue;
+			}
+
+			++results.executed;
+			try {
+				fp();
+				++results.passed;
+			} catch (Throwable e) {
+				import core.stdc.stdio;
+				fprintf(stderr, "%.*s: %.*s(%llu): [unittest] %.*s\n",
+					cast(int) m.name.length, m.name.ptr,
+					cast(int) e.file.length, e.file.ptr,
+					cast(ulong) e.line,
+					cast(int) (e.msg ? e.msg.length : 0),
+					e.msg ? e.msg.ptr : "");
+			}
+		}
+
+		results.summarize = true;
+		return results;
+	}
+}
+
+public:
+
 // functions to create and join low level threads
-version(linux) {
+version(Posix) {
 	public import core.sys.posix.unistd : sleep, usleep;
 }
 else version(Windows) {
@@ -23,7 +72,7 @@ else version(Windows) {
 
 ThreadHandle runThread(void* delegate() dg) {
 	ThreadHandle tid;
-	version (linux) {
+	version (Posix) {
 		import core.sys.posix.pthread;
 		extern (C) void* function(void*) fptr;
 		fptr = cast(typeof(fptr)) dg.funcptr;
@@ -43,7 +92,7 @@ ThreadHandle runThread(void* delegate() dg) {
 }
 
 void* joinThread(ThreadHandle tid) {
-	version(linux) {
+	version(Posix) {
 		import core.sys.posix.pthread;
 		void* result;
 		pthread_join(tid, &result);

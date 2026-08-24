@@ -54,6 +54,17 @@ void initSDCThread(ThreadBase t) nothrow @nogc
 	t.tlsGCData = &threadCache;
 }
 
+version(Symgc_default_gc) {
+	/**
+	 * Integration tests select the sdc GC explicitly on Windows via
+	 * rt_options. Do the same by default on macOS, so that druntime
+	 * routes thread registration through initSDCThread and every
+	 * druntime thread gets its tlsGCData set (required by the
+	 * stop-the-world machinery).
+	 */
+	extern(C) __gshared string[] rt_options = ["gcopt=gc:sdc"];
+}
+
 private pragma(crt_constructor) void gc_sdc_ctor()
 {
 	_d_register_sdc_gc();
@@ -69,7 +80,7 @@ extern(C) void _d_register_sdc_gc()
 		import d.gc.thread;
 		createProcess();
 	}
-	else version(Posix)
+	else version(linux)
 	{
 		// set druntime's signals to match ours, we are going to use their
 		// signal mechanisms. Have to do this before dmain2/thread_init.
@@ -105,7 +116,14 @@ private GC initializeQuiet()
 	else {
 		// now it is ok to initialize
 		import d.gc.thread;
-		createProcess();
+		try {
+			createProcess();
+		} catch (Throwable t) {
+			import core.stdc.stdio;
+			fprintf(stderr, "createProcess threw: %.*s\n", cast(int) t.msg.length, t.msg.ptr);
+			fprintf(stderr, "file: %.*s:%llu\n", cast(int) t.file.length, t.file.ptr, cast(ulong) t.line);
+			throw t;
+		}
 	}
 
 	// check the config to see if we should set the thread count for scanning.
@@ -130,7 +148,13 @@ private GC initialize()
 {
 	import core.stdc.stdio;
 	printf("using SYM GC!\n");
-	return initializeQuiet();
+	try {
+		return initializeQuiet();
+	} catch (Throwable t) {
+		fprintf(stderr, "initializeQuiet threw: %.*s\n", cast(int) t.msg.length, t.msg.ptr);
+		fprintf(stderr, "file: %.*s:%llu\n", cast(int) t.file.length, t.file.ptr, cast(ulong) t.line);
+		throw t;
+	}
 }
 
 final class SnazzyGC : GC

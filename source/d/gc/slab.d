@@ -73,29 +73,62 @@ public:
 }
 
 @"SlabRange" unittest {
-	auto pd = PageDescriptor(0x100000000000000a);
+	version(OSX) {
+		// 16k pages: derive the layout from the bin info instead of
+		// hardcoding 4k page arithmetic.
+		auto pd = PageDescriptor((ulong(1) << 60) | 0x0a);
 
-	assert(pd.extent is null);
-	assert(pd.index == 1);
+		assert(pd.extent is null);
+		assert(pd.index == 1);
 
-	auto ec = pd.extentClass;
-	assert(ec.sizeClass == 9);
+		auto ec = pd.extentClass;
+		assert(ec.sizeClass == 9);
 
-	auto ptr = cast(void*) 0x56789abcd123;
-	auto base = cast(void*) 0x56789abcc000;
-	auto slot = cast(void*) 0x56789abcd0e0;
+		auto slotSize = binInfos[9].slotSize;
 
-	auto se = SlabEntry(pd, ptr);
-	assert(se.index == 45);
-	assert(se.base is base);
-	assert(se.sizeClass == 9);
+		// A slab starting 16k aligned; the descriptor points one page
+		// into the slab, and ptr sits 0x23 bytes into that page.
+		auto base = cast(void*) 0x5678_9000_0000;
+		auto ptr = base + PageSize + 0x123;
 
-	auto addr = se.computeAddress();
-	assert(addr is slot);
+		auto se = SlabEntry(pd, ptr);
+		enum expectedIndex = (PageSize + 0x123) / 96;
 
-	auto r0 = se.computeRange();
-	assert(r0.ptr is cast(const(void*)*) slot);
-	assert(r0.length == 12);
+		assert(se.index == expectedIndex);
+		assert(se.base is base);
+		assert(se.sizeClass == 9);
+
+		auto addr = se.computeAddress();
+		assert(addr is base + expectedIndex * slotSize);
+
+		auto r0 = se.computeRange();
+		assert(r0.ptr is cast(const(void*)*) addr);
+		assert(r0.length == slotSize / PointerSize);
+	} else {
+		auto pd = PageDescriptor(0x100000000000000a);
+
+		assert(pd.extent is null);
+		assert(pd.index == 1);
+
+		auto ec = pd.extentClass;
+		assert(ec.sizeClass == 9);
+
+		auto ptr = cast(void*) 0x56789abcd123;
+		auto base = cast(void*) 0x56789abcc000;
+		auto slot = cast(void*) 0x56789abcd0e0;
+
+		auto se = SlabEntry(pd, ptr);
+		assert(se.index == 45);
+		assert(se.base is base);
+		assert(se.sizeClass == 9);
+
+		auto addr = se.computeAddress();
+		assert(addr is slot);
+
+		auto r0 = se.computeRange();
+		assert(r0.ptr is cast(const(void*)*) slot);
+		assert(r0.length == 12);
+	}
 }
 
 struct SlotMetadata {
@@ -544,12 +577,12 @@ struct BinInfo {
 
 	@property
 	bool supportsMetadata() const {
-		return nslots <= 256;
+		return nslots <= MaxFlagSlots;
 	}
 
 	@property
 	bool supportsInlineMarking() const {
-		return nslots <= 128;
+		return nslots <= MaxMarkSlots;
 	}
 }
 
@@ -560,7 +593,15 @@ immutable BinInfo[BinCount] binInfos = getBinInfos();
 	foreach (uint sc, bin; binInfos) {
 		assert(bin.supportsMetadata == sizeClassSupportsMetadata(sc));
 		assert(bin.supportsInlineMarking == sizeClassSupportsInlineMarking(sc));
-		assert(bin.dense == isDenseSizeClass(sc));
-		assert(bin.sparse == isSparseSizeClass(sc));
+
+		version(OSX) {
+			// The slot count proxy and the density sieve only coincide
+			// on 4k page systems; verify each definition instead.
+			assert(bin.dense == (bin.nslots > 16));
+			assert(bin.sparse == !bin.dense);
+		} else {
+			assert(bin.dense == isDenseSizeClass(sc));
+			assert(bin.sparse == isSparseSizeClass(sc));
+		}
 	}
 }

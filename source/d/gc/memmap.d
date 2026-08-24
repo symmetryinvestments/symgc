@@ -9,6 +9,9 @@ version(linux) {
 	// not included in druntime for some reason
 	enum MADV_FREE = 8;
 }
+else version(OSX) {
+	import core.sys.darwin.sys.mman;
+}
 else version(Windows) {
 	import core.sys.windows.winbase;
 	import core.sys.windows.winnt;
@@ -64,6 +67,17 @@ void* pages_map(void* addr, size_t size, size_t alignment) {
 
 		auto leadSize = alignUpOffset(pages, alignment);
 		version (linux) {
+			if (leadSize > 0) {
+				pages_unmap(pages, leadSize);
+			}
+
+			assert(asize >= size + leadSize);
+			auto trailSize = asize - leadSize - size;
+			if (trailSize) {
+				pages_unmap(pages + leadSize + size, trailSize);
+			}
+			ret = pages + leadSize;
+		} else version (OSX) {
 			if (leadSize > 0) {
 				pages_unmap(pages, leadSize);
 			}
@@ -267,6 +281,10 @@ void pages_unmap(void* addr, size_t size) {
 		auto ret = munmap(addr, size);
 		assert(ret == 0, "munmap failed!");
 	}
+	else version(OSX) {
+		auto ret = munmap(addr, size);
+		assert(ret == 0, "munmap failed!");
+	}
 	else version(Windows) {
 		auto ret = VirtualFree(addr, 0, MEM_RELEASE);
 		assert(ret, "VirtualFree failed!");
@@ -275,6 +293,9 @@ void pages_unmap(void* addr, size_t size) {
 
 void pages_purge(void* addr, size_t size) {
 	version(linux) {
+		auto ret = madvise(addr, size, MADV_DONTNEED);
+		assert(ret == 0, "madvise failed!");
+	} else version(OSX) {
 		auto ret = madvise(addr, size, MADV_DONTNEED);
 		assert(ret == 0, "madvise failed!");
 	} else version(Windows) {
@@ -307,6 +328,9 @@ void pages_purge(void* addr, size_t size) {
 
 void pages_purge_lazy(void* addr, size_t size) {
 	version (linux) {
+		auto ret = madvise(addr, size, MADV_FREE);
+		assert(ret == 0, "madvise failed!");
+	} else version (OSX) {
 		auto ret = madvise(addr, size, MADV_FREE);
 		assert(ret == 0, "madvise failed!");
 	} else version (Windows) {
@@ -419,6 +443,18 @@ void* os_pages_map(void* addr, size_t size, size_t alignment) {
 		assert(ret !is null);
 
 		enum MAP_FAILED = cast(void*) -1L;
+		if (ret is MAP_FAILED) {
+			return null;
+		}
+	}
+	else version(OSX) {
+		enum PagesFDTag = -1;
+		enum MMapFlags = MAP_PRIVATE | MAP_ANON | MAP_NORESERVE;
+
+		auto ret =
+			mmap(addr, size, PROT_READ | PROT_WRITE, MMapFlags, PagesFDTag, 0);
+		assert(ret !is null);
+
 		if (ret is MAP_FAILED) {
 			return null;
 		}

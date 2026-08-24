@@ -274,8 +274,12 @@ private:
 			return r;
 		}
 
-		static assert(ExtentSize / Region.sizeof == 2,
-		              "Unexpected Region size!");
+		enum RegionsPerExtent = ExtentSize / Region.sizeof;
+		version(OSX) {
+			static assert(RegionsPerExtent == 10, "Unexpected Region size!");
+		} else {
+			static assert(RegionsPerExtent == 2, "Unexpected Region size!");
+		}
 
 		auto slot = base.allocSlot();
 		if (slot.address is null) {
@@ -285,10 +289,13 @@ private:
 		auto r0 = cast(Region*) slot.address;
 		*r0 = Region(null, 0, slot.generation);
 
-		auto r1 = r0 + 1;
-		*r1 = Region(null, 0, slot.generation);
+		static foreach (i; 1 .. RegionsPerExtent) {{
+			auto ri = r0 + i;
+			*ri = Region(null, 0, slot.generation);
 
-		unusedRegions.insert(r1);
+			unusedRegions.insert(ri);
+		}}
+
 		return r0;
 	}
 }

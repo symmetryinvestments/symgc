@@ -79,7 +79,7 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 		if (tc is null) {
 			assert(0, "tlsGCData was not set for this thread!");
 		}
-		version (Posix)
+		version (linux)
 		{
 			// determine if this thread is suspended or should be suspended.
 			auto ss = tc.suspendState;
@@ -93,6 +93,28 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 			tc.sendSuspendSignal();
 			// use druntime suspension calls.
 			core_thread_osthread_suspend(t);
+		}
+		else version(OSX)
+		{
+			// use the same states to make the code consistent.
+			tc.sendSuspendSignal();
+
+			if (core_thread_osthread_suspend(t)) {
+				if (tc.onSuspendSignal()) {
+					tc.markSuspended();
+					++suspended;
+					continue;
+				}
+
+				// delayed, resume the thread, and increment the delayed thread count.
+				// IMPORTANT: We must FIRST resume the thread, as it may hold
+				// the lock that we need to increment the delayed count.
+				core_thread_osthread_resume(t);
+				import d.gc.thread : delayedThreadInc;
+				delayedThreadInc();
+
+				retry = true;
+			}
 		}
 		else version(Windows)
 		{
@@ -120,27 +142,50 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 		else static assert(false);
 	}
 
-	version(Windows) if (retry) {
-		// in this case, retry means some threads were delayed. need to wait for them,
-		// we are not going to return until all threads are suspended.
-		retry = false;
-		// wait for all delayed threads to be ready for suspension
-		import d.gc.thread : waitForDelayedThreads;
-		waitForDelayedThreads();
-		foreach(t; ThreadIterator(ThreadBase.sm_tbeg.toThread))
-		{
-			auto tc = cast(ThreadCache*) t.tlsGCData();
-			assert (tc !is null); // not possible at this point.
-			if (tc.suspendState != SuspendState.Suspended) {
-				if (!core_thread_osthread_suspend(t)) {
-					assert(0, "could not suspend thread");
+	version(Windows) {
+		if (retry) {
+			// in this case, retry means some threads were delayed. need to wait for them,
+			// we are not going to return until all threads are suspended.
+			retry = false;
+			// wait for all delayed threads to be ready for suspension
+			import d.gc.thread : waitForDelayedThreads;
+			waitForDelayedThreads();
+			foreach(t; ThreadIterator(ThreadBase.sm_tbeg.toThread))
+			{
+				auto tc = cast(ThreadCache*) t.tlsGCData();
+				assert (tc !is null); // not possible at this point.
+				if (tc.suspendState != SuspendState.Suspended) {
+					if (!core_thread_osthread_suspend(t)) {
+						assert(0, "could not suspend thread");
+					}
+					tc.markSuspended();
+					tc.checkLockWaiting();
+					++suspended;
 				}
-				tc.markSuspended();
-				tc.checkLockWaiting();
-				++suspended;
 			}
 		}
-
+	}
+	else version(OSX) {
+		if (retry) {
+			// in this case, retry means some threads were delayed. need to wait for them,
+			// we are not going to return until all threads are suspended.
+			retry = false;
+			// wait for all delayed threads to be ready for suspension
+			import d.gc.thread : waitForDelayedThreads;
+			waitForDelayedThreads();
+			foreach(t; ThreadIterator(ThreadBase.sm_tbeg.toThread))
+			{
+				auto tc = cast(ThreadCache*) t.tlsGCData();
+				assert (tc !is null); // not possible at this point.
+				if (tc.suspendState != SuspendState.Suspended) {
+					if (!core_thread_osthread_suspend(t)) {
+						assert(0, "could not suspend thread");
+					}
+					tc.markSuspended();
+					++suspended;
+				}
+			}
+		}
 	}
 
 	// suspend all the threads that are not us, but also record that we suspended "ourself"
@@ -185,7 +230,7 @@ bool resumeDruntimeThreads(ref uint suspended) {
 
 		auto ss = tc.suspendState;
 
-		version(Posix) {
+		version(linux) {
 			suspended += ss == SuspendState.Suspended;
 			retry |= ss != SuspendState.Probation;
 
@@ -193,6 +238,14 @@ bool resumeDruntimeThreads(ref uint suspended) {
 				continue;
 
 			tc.sendResumeSignal();
+		} else version(OSX) {
+			// Since there is no signal processing on the target thread, we need to
+			// do the step that sets the state properly from here.
+			if (ss != SuspendState.Suspended)
+				continue;
+
+			tc.sendResumeSignal();
+			tc.onResumeSignal();
 		} else version(Windows) {
 			// Since there is no signal processing on the target thread, we need to
 			// do the step that sets the state properly from here.
@@ -211,6 +264,9 @@ bool resumeDruntimeThreads(ref uint suspended) {
 	suspendDepth = suspended;
 	return retry;
 }
+
+
+
 
 void clearDruntimeThreadProbation() {
 	import d.gc.tcache;

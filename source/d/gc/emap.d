@@ -286,7 +286,7 @@ public:
 	}
 
 	// We have not mapped anything.
-	auto ptr = cast(void*) 0x56789abcd000;
+	auto ptr = alignUp(cast(void*) 0x56789abcd000, PageSize);
 	assert(emap.lookup(ptr).data == 0);
 
 	auto slot = base.allocSlot();

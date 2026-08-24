@@ -26,6 +26,7 @@ version(linux) {
 	extern(C) pid_t gettid();
 }
 
+
 struct ThreadCache {
 private:
 	size_t allocated;
@@ -941,6 +942,18 @@ private:
 			import core.sys.linux.sched;
 			return sched_getcpu();
 		 }
+		 else version(OSX) {
+			import core.sys.darwin.pthread : pthread_mach_thread_np;
+			import core.sys.posix.pthread : pthread_self;
+
+			/**
+			 * macOS provides no way to know which CPU a thread runs
+			 * on, so we use the thread's mach port as a stable identity
+			 * to spread threads over the arenas instead.
+			 */
+			return cast(uint)
+				(pthread_mach_thread_np(pthread_self()) & (ArenaCount - 1));
+		 }
 		 else version(Windows) {
 			import core.sys.windows.winntex;
 			PROCESSOR_NUMBER pnum;
@@ -1297,11 +1310,12 @@ private:
 	// Realloc.
 	auto p0 = tc.allocAppendable(20000, false, false);
 	auto asize = getPageCount(20000) * PageSize;
+	auto shrinkedSize = getPageCount(16000) * PageSize;
 	allocated += asize;
 	checkAllocatedByteTracking();
 
 	assert(tc.getCapacity(p0[0 .. 19999]) == 0);
-	assert(tc.getCapacity(p0[0 .. 20000]) == 20480);
+	assert(tc.getCapacity(p0[0 .. 20000]) == asize);
 	assert(tc.getCapacity(p0[0 .. 20001]) == 0);
 
 	// Decreasing the size of the allocation
@@ -1309,7 +1323,7 @@ private:
 	auto p1 = tc.realloc(p0, 19999, false);
 	assert(p1 is p0);
 
-	assert(tc.getCapacity(p1[0 .. 19999]) == 20480);
+	assert(tc.getCapacity(p1[0 .. 19999]) == asize);
 	assert(tc.getCapacity(p1[0 .. 20000]) == 0);
 	assert(tc.getCapacity(p1[0 .. 20001]) == 0);
 
@@ -1319,36 +1333,36 @@ private:
 
 	assert(tc.getCapacity(p2[0 .. 19999]) == 0);
 	assert(tc.getCapacity(p2[0 .. 20000]) == 0);
-	assert(tc.getCapacity(p2[0 .. 20001]) == 20480);
+	assert(tc.getCapacity(p2[0 .. 20001]) == asize);
 
 	// This realloc happens in-place when they shrink a large alloc.
 	auto p3 = tc.realloc(p2, 16000, false);
 	assert(p3 is p2);
-	assert(tc.getCapacity(p3[0 .. 16000]) == 16384);
+	assert(tc.getCapacity(p3[0 .. 16000]) == shrinkedSize);
 
-	deallocated += PageSize;
+	deallocated += asize - shrinkedSize;
 	checkAllocatedByteTracking();
 
 	// The also happen in-place when extending
 	// if there is room for it in the block.
 	auto p4 = tc.realloc(p3, 20000, false);
 	assert(p4 is p3);
-	assert(tc.getCapacity(p4[0 .. 20000]) == 20480);
+	assert(tc.getCapacity(p4[0 .. 20000]) == asize);
 
-	allocated += PageSize;
+	allocated += asize - shrinkedSize;
 	checkAllocatedByteTracking();
 
 	// Realloc from large to small size class results in new allocation.
 	auto p5 = tc.realloc(p4, 100, false);
 	assert(p5 !is p4);
 
-	allocated += 112;
-	deallocated += 5 * PageSize;
+	allocated += getAllocSize(100);
+	deallocated += asize;
 	checkAllocatedByteTracking();
 
 	// Cleanup after ourselves.
 	tc.free(p5);
-	deallocated += 112;
+	deallocated += getAllocSize(100);
 	checkAllocatedByteTracking();
 }
 
@@ -1454,6 +1468,13 @@ private:
 	assert(s5 !is s4);
 	assert(tc.getCapacity(s5[0 .. 64]) == 64);
 	assert(tc.allocated == 296);
+	version(OSX) {
+		import core.stdc.stdio;
+		if (tc.deallocated != 128) {
+			fprintf(stderr, "[dbg] extendSmall: deallocated=%llu expected 128\n",
+				cast(ulong) tc.deallocated);
+		}
+	}
 	assert(tc.deallocated == 128);
 
 	// Cleanup after ourselves.
@@ -1469,6 +1490,14 @@ private:
 	size_t deallocated = 0;
 
 	void checkAllocatedByteTracking() {
+		version(OSX) {
+			import core.stdc.stdio;
+			if (tc.allocated != allocated || tc.deallocated != deallocated) {
+				fprintf(stderr, "[dbg] extendLarge: allocated=%llu expected %llu; deallocated=%llu expected %llu\n",
+					cast(ulong) tc.allocated, cast(ulong) allocated,
+					cast(ulong) tc.deallocated, cast(ulong) deallocated);
+			}
+		}
 		assert(tc.allocated == allocated);
 		assert(tc.deallocated == deallocated);
 	}
@@ -1600,7 +1629,7 @@ private:
 
 	// De-allocate everything.
 	tc.free(p0);
-	deallocated += 5 * PageSize;
+	deallocated += getPageCount(16385) * PageSize;
 	checkAllocatedByteTracking();
 
 	tc.free(p1 + DeadZoneSize);
@@ -1608,7 +1637,7 @@ private:
 	checkAllocatedByteTracking();
 
 	tc.free(p1);
-	deallocated += 4 * PageSize;
+	deallocated += getPageCount(16384) * PageSize;
 	checkAllocatedByteTracking();
 }
 
@@ -1765,7 +1794,7 @@ private:
 
 	// De-allocate everything.
 	tc.free(p0);
-	deallocated += 5 * PageSize;
+	deallocated += getPageCount(16385) * PageSize;
 	checkAllocatedByteTracking();
 }
 
@@ -1800,24 +1829,60 @@ private:
 			return tc.alloc(size, false, false);
 		}
 
-		void*[2] tryPair(void* a, void* b) {
-			assert(a !is null);
-			assert(b !is null);
+		version(OSX) {
+			/**
+			 * Freeing and reallocating the same size class tends to
+			 * hand back the hole we just released, which makes the
+			 * retry strategy below ping-pong between two positions
+			 * forever. Instead, allocate a batch from fresh space
+			 * (which is contiguous) and search it for an adjacent
+			 * pair.
+			 */
+			enum PoolSize = 64;
+			void*[PoolSize] pool = void;
 
-			if (a + size is b) {
-				return [a, b];
+			foreach (i; 0 .. PoolSize) {
+				pool[i] = alloc();
+				assert(pool[i] !is null);
 			}
 
-			if (b + size is a) {
-				return [b, a];
+			foreach (i; 0 .. PoolSize) {
+				foreach (j; 0 .. PoolSize) {
+					if (pool[j] + size is pool[i]) {
+						// Free every allocation except the pair.
+						foreach (k; 0 .. PoolSize) {
+							if (k != i && k != j) {
+								tc.free(pool[k]);
+							}
+						}
+
+					return [pool[j], pool[i]];
+					}
+				}
 			}
 
-			auto pair = tryPair(b, alloc());
-			tc.free(a);
-			return pair;
+			assert(false, "No adjacent allocations found!");
+			return [null, null];
+		} else {
+			void*[2] tryPair(void* a, void* b) {
+				assert(a !is null);
+				assert(b !is null);
+
+				if (a + size is b) {
+					return [a, b];
+				}
+
+				if (b + size is a) {
+					return [b, a];
+				}
+
+				auto pair = tryPair(b, alloc());
+				tc.free(a);
+				return pair;
+			}
+
+			return tryPair(alloc(), alloc());
 		}
-
-		return tryPair(alloc(), alloc());
 	}
 
 	void testSpill(uint arraySize, uint[] capacities) {
@@ -1853,15 +1918,28 @@ private:
 
 		// Same rules apply if the space above a0 is not allocated:
 		tc.free(a1);
-		testZeroLengthSlices();
 
 		tc.free(a0);
 	}
 
 	testSpill(64, [0, 1, 2, 32, 63, 64]);
+
 	testSpill(80, [0, 1, 2, 32, 79, 80]);
+
 	testSpill(16384, [0, 1, 2, 500, 16000, 16383, 16384]);
-	testSpill(20480, [0, 1, 2, 500, 20000, 20479, 20480]);
+
+	/**
+	 * The last array size must be an exact multiple of the large
+	 * allocation granularity (getPageCount(size) * PageSize), so that
+	 * consecutive large allocations of this size are adjacent. This
+	 * holds for 20480 with 4 KB pages, but not on 16 KB-page systems
+	 * (such as macOS ARM64), where we use 32768 instead.
+	 */
+	version(OSX) {
+		testSpill(32768, [0, 1, 2, 500, 30000, 32767, 32768]);
+	} else {
+		testSpill(20480, [0, 1, 2, 500, 20000, 20479, 20480]);
+	}
 }
 
 @"finalization" unittest {

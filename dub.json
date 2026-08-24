@@ -41,6 +41,10 @@
 			],
 			"versions-windows" : [
 				"Symgc_druntime_hooks"
+			],
+			"versions-osx" : [
+				"Symgc_druntime_hooks",
+				"Symgc_default_gc"
 			]
 		},
 		{

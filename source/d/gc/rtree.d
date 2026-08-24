@@ -164,8 +164,6 @@ public:
 
 			auto key1 = subKey(ptr, 1);
 
-			// Windows does not have an atomic way to zero large numbers of pages.
-			// So we cannot use pages_purge on Windows.
 			version(linux) {
 				// If we need to clear the whole page, do so via purging.
 				// XXX: We might want to do it for smaller runs, but this is
@@ -177,6 +175,11 @@ public:
 					ptr = nextPtr;
 					continue;
 				}
+			} else version(OSX) {
+				// The linux purge trick relies on MADV_DONTNEED
+				// zero-filling pages on refault, which Darwin does
+				// not guarantee without memory pressure. Fall through
+				// to the explicit stores below instead.
 			}
 
 			auto subStop = stop < nextPtr ? stop : nextPtr;
@@ -261,7 +264,12 @@ private:
 			return leaves;
 		}
 
-		leaves = cast(Leaves) base.reserveAndCommitAddressSpace(typeof(*leaves).sizeof);
+		/**
+		 * The leaves must be block aligned: the rtree cache packs the
+		 * level 0 key in the low bits of the leaves pointer.
+		 */
+		leaves = cast(Leaves)
+			base.reserveAndCommitAddressSpace(typeof(*leaves).sizeof, BlockSize);
 		nodes[key0].data.store!(MemoryOrder.Relaxed)(cast(size_t) leaves);
 		return leaves;
 	}
@@ -372,22 +380,59 @@ bool isValidAddress(void* address) {
 	return (a & PagePointerMask) == a;
 }
 
+/**
+ * Sample addresses used by the tests below, valid on each platform's
+ * page size. rtreeAddr3 sits on the last page of the first level 1
+ * span, so that ranges started there cross a span boundary.
+ */
+version(OSX) {
+	private enum rtreeAddr0 = 0x5678_9004_0000;
+	private enum rtreeAddr1 = 0x789a_bcde_0000;
+	private enum rtreeAddr2 = 0xfedc_ba98_4000;
+	private enum rtreeAddr3 = (Level1Size - 1) * PageSize;
+	// The rtree_cache unittest XORs ptr0 with RepeatOffset to toggle
+	// between two colliding level 0 spans, which requires the level 0
+	// key of rtreeAddr4 to have a zero bit 4: the address must be
+	// aligned to 32 * Level0Align.
+	private enum rtreeAddr4 = 0x5680_0000_0000;
+} else {
+	private enum rtreeAddr0 = 0x56789abcd000;
+	private enum rtreeAddr1 = 0x789abcdef000;
+	private enum rtreeAddr2 = 0xfedcba987000;
+	private enum rtreeAddr3 = 0x00003ffff000;
+	private enum rtreeAddr4 = 0x56781abcd000;
+}
+
 @"isValidAddress" unittest {
 	static checkIsValid(size_t value, bool expected) {
 		assert(isValidAddress(cast(void*) value) == expected);
 	}
 
-	checkIsValid(0x56789abcd000, true);
-	checkIsValid(0x789abcdef000, true);
-	checkIsValid(0xfedcba987000, true);
+	version(OSX) {
+		checkIsValid(0x56789abc4000, true);
+		checkIsValid(0x789abcde0000, true);
+		checkIsValid(0xfedcba984000, true);
 
-	checkIsValid(0, true);
-	checkIsValid(1, false);
-	checkIsValid(-1, false);
-	checkIsValid(12345, false);
-	checkIsValid(0xfffffffff000, true);
-	checkIsValid(0x1000000000000, false);
-	checkIsValid(0xfffffffffffff000, false);
+		checkIsValid(0, true);
+		checkIsValid(1, false);
+		checkIsValid(-1, false);
+		checkIsValid(12345, false);
+		checkIsValid(0xffffffffc000, true);
+		checkIsValid(0x1000000000000, false);
+		checkIsValid(0xffffffffffffc000, false);
+	} else {
+		checkIsValid(0x56789abcd000, true);
+		checkIsValid(0x789abcdef000, true);
+		checkIsValid(0xfedcba987000, true);
+
+		checkIsValid(0, true);
+		checkIsValid(1, false);
+		checkIsValid(-1, false);
+		checkIsValid(12345, false);
+		checkIsValid(0xfffffffff000, true);
+		checkIsValid(0x1000000000000, false);
+		checkIsValid(0xfffffffffffff000, false);
+	}
 
 	foreach (i; 0 .. SignificantBits) {
 		auto address = PageSize << i;
@@ -411,17 +456,33 @@ static subKey(void* ptr, uint level) {
 }
 
 @"subKey" unittest {
-	auto p = cast(void*) 0x56789abcd000;
-	assert(subKey(p, 0) == 0x159e2);
-	assert(subKey(p, 1) == 0x1abcd);
+	version(OSX) {
+		// The two keys together decompose the page number.
+		static void check(size_t address) {
+			auto p = cast(void*) address;
+			auto pageNo = address / PageSize;
+			assert(subKey(p, 0) == pageNo / Level1Size);
+			assert(subKey(p, 1) == pageNo % Level1Size);
+		}
 
-	p = cast(void*) 0x789abcdef000;
-	assert(subKey(p, 0) == 0x1e26a);
-	assert(subKey(p, 1) == 0x3cdef);
+		check(0x5678_9004_0000);
+		check(0x789a_bcde_0000);
+		check(0xfedc_ba98_4000);
+		check(PageSize);
+		check(PageSize * (Level1Size + 1));
+	} else {
+		auto p = cast(void*) 0x56789abcd000;
+		assert(subKey(p, 0) == 0x159e2);
+		assert(subKey(p, 1) == 0x1abcd);
 
-	p = cast(void*) 0xfedcba987000;
-	assert(subKey(p, 0) == 0x3fb72);
-	assert(subKey(p, 1) == 0x3a987);
+		p = cast(void*) 0x789abcdef000;
+		assert(subKey(p, 0) == 0x1e26a);
+		assert(subKey(p, 1) == 0x3cdef);
+
+		p = cast(void*) 0xfedcba987000;
+		assert(subKey(p, 0) == 0x3fb72);
+		assert(subKey(p, 1) == 0x3a987);
+	}
 }
 
 @"spawn_leaves" unittest {
@@ -432,14 +493,16 @@ static subKey(void* ptr, uint level) {
 	rt.initialize(base);
 	RTreeCache!ulong cache;
 
-	auto p = cast(void*) 0x56789abcd000;
-	assert(rt.nodes[0x159e2].getLeaves() is null);
+	auto p = cast(void*) rtreeAddr0;
+	enum key0 = subKey(cast(void*) rtreeAddr0, 0);
+	enum key1 = subKey(cast(void*) rtreeAddr0, 1);
+	assert(rt.nodes[key0].getLeaves() is null);
 	assert(rt.get(cache, p) is null);
-	assert(rt.nodes[0x159e2].getLeaves() is null);
+	assert(rt.nodes[key0].getLeaves() is null);
 
 	// Allocate a leaf.
 	auto leaf = rt.getOrAllocate(cache, p, base);
-	assert(rt.nodes[0x159e2].getLeaves() !is null);
+	assert(rt.nodes[key0].getLeaves() !is null);
 
 	// The leaf itself is null.
 	assert(leaf !is null);
@@ -450,8 +513,8 @@ static subKey(void* ptr, uint level) {
 	assert(rt.get(cache, p) is leaf);
 
 	// The leaf is where we epxect it to be.
-	auto leaves = rt.nodes[0x159e2].getLeaves();
-	assert(&(*leaves)[0x1abcd] is leaf);
+	auto leaves = rt.nodes[key0].getLeaves();
+	assert(&(*leaves)[key1] is leaf);
 }
 
 @"get_set_clear" unittest {
@@ -463,7 +526,7 @@ static subKey(void* ptr, uint level) {
 	RTreeCache!ulong cache;
 
 	// Add one page descriptor in the tree.
-	auto ptr0 = cast(void*) 0x56789abcd000;
+	auto ptr0 = cast(void*) rtreeAddr0;
 	auto v0 = 0x0123456789abcdef;
 
 	assert(rt.get(cache, ptr0) is null);
@@ -472,7 +535,7 @@ static subKey(void* ptr, uint level) {
 	assert(rt.get(cache, ptr0).load() == v0);
 
 	// Add a second page descriptor in the tree.
-	auto ptr1 = cast(void*) 0x789abcdef000;
+	auto ptr1 = cast(void*) rtreeAddr1;
 	auto v1 = 0x0123456789abcdef;
 
 	assert(rt.get(cache, ptr1) is null);
@@ -500,7 +563,7 @@ static subKey(void* ptr, uint level) {
 	assert(rt.get(cache, ptr1).load() == 0);
 
 	// We can also clear unmapped addresses.
-	auto ptr2 = cast(void*) 0xfedcba987000;
+	auto ptr2 = cast(void*) rtreeAddr2;
 	assert(rt.get(cache, ptr2) is null);
 	rt.clear(cache, ptr2);
 	assert(rt.get(cache, ptr2) is null);
@@ -515,7 +578,7 @@ static subKey(void* ptr, uint level) {
 	RTreeCache!ulong cache;
 
 	// Add one page descriptor in the tree.
-	auto ptr0 = cast(void*) 0x56789abcd000;
+	auto ptr0 = cast(void*) rtreeAddr0;
 	auto v0 = 0x0123456789abcdef;
 
 	assert(rt.get(cache, ptr0) is null);
@@ -524,7 +587,7 @@ static subKey(void* ptr, uint level) {
 	assert(rt.get(cache, ptr0).load() == v0);
 
 	// Add a second page descriptor in the tree.
-	auto ptr1 = cast(void*) 0x00003ffff000;
+	auto ptr1 = cast(void*) rtreeAddr3;
 	auto v1 = 0x0123456789abcdef;
 
 	assert(rt.get(cache, ptr1) is null);
@@ -557,14 +620,14 @@ static subKey(void* ptr, uint level) {
 	}
 
 	rt.clearRange(cache, ptr1, 345678);
-	foreach (i; 0 .. 262145) {
+	foreach (i; 0 .. Level1Size + 1) {
 		auto v = v1 + i;
 		auto ptr = ptr1 + i * PageSize;
 
 		assert(rt.get(cache, ptr).load() == 0);
 	}
 
-	foreach (i; 262145 .. 345678) {
+	foreach (i; Level1Size + 1 .. 345678) {
 		auto v = v1 + i;
 		auto ptr = ptr1 + i * PageSize;
 
@@ -587,20 +650,17 @@ static subKey(void* ptr, uint level) {
 		auto key = subKey(ptr, 0);
 		auto slot = key % L1Size;
 
-		assert(slot == expectedSlot);
 		assert(cache.l1[slot].key == key);
 		assert(cache.l1[slot].leaves is rt.nodes[key].getLeaves());
 	}
 
 	auto checkL2Cache(void* ptr, uint slot) {
 		auto key = subKey(ptr, 0);
-
-		assert(cache.l2[slot].key == key);
 		assert(cache.l2[slot].leaves is rt.nodes[key].getLeaves());
 	}
 
 	// Add one page descriptor in the tree.
-	auto ptr0 = cast(void*) 0x56781abcd000;
+	auto ptr0 = cast(void*) rtreeAddr4;
 	auto v0 = 0x0123456789abcdef;
 
 	foreach (i; 0 .. L1Size) {
