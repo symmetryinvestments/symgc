@@ -286,7 +286,7 @@ public:
 	}
 
 	// We have not mapped anything.
-	auto ptr = cast(void*) 0x56789abcd000;
+	auto ptr = cast(void*) 0x56789abc0000;
 	assert(emap.lookup(ptr).data == 0);
 
 	auto slot = base.allocSlot();

@@ -58,8 +58,13 @@ bool isHugeSizeClass(uint sizeClass) {
 }
 
 @"sizeClassPredicates" unittest {
-	assert(ClassCount.Small == 39, "Unexpected small class count!");
-	assert(ClassCount.Large == 67, "Unexpected large class count!");
+	version (OSX) {
+		assert(ClassCount.Small == 47, "Unexpected small class count!");
+		assert(ClassCount.Large == 67, "Unexpected large class count!");
+	} else {
+		assert(ClassCount.Small == 39, "Unexpected small class count!");
+		assert(ClassCount.Large == 67, "Unexpected large class count!");
+	}
 	assert(ClassCount.Total == 239, "Unexpected total class count!");
 
 	foreach (s; 0 .. ClassCount.Small) {
@@ -83,7 +88,14 @@ bool isHugeSizeClass(uint sizeClass) {
 
 // Determine whether given size class supports metadata.
 bool sizeClassSupportsMetadata(uint sizeClass) {
-	return sizeClass > 0;
+	if (sizeClass >= ClassCount.Small) {
+		return true;
+	}
+
+	// The metadata bitfield is sized by the number of slots in a slab,
+	// so this must come from the computed bin layout.
+	import d.gc.slab : binInfos;
+	return binInfos[sizeClass].supportsMetadata;
 }
 
 @"sizeClassSupportsMetadata" unittest {
@@ -100,7 +112,12 @@ bool sizeClassSupportsMetadata(uint sizeClass) {
 
 // Determine whether given size class supports inline marking.
 bool sizeClassSupportsInlineMarking(uint sizeClass) {
-	return sizeClass > 2;
+	if (sizeClass >= ClassCount.Small) {
+		return true;
+	}
+
+	import d.gc.slab : binInfos;
+	return binInfos[sizeClass].supportsInlineMarking;
 }
 
 @"sizeClassSupportsInlineMarking" unittest {
@@ -118,9 +135,15 @@ bool sizeClassSupportsInlineMarking(uint sizeClass) {
 }
 
 bool isDenseSizeClass(uint sizeClass) {
-	enum Sieve = 1 << 15 | 1 << 19 | 1 << 21;
-	auto match = Sieve & (1 << sizeClass);
-	return !match && sizeClass < 23;
+	if (sizeClass >= ClassCount.Small) {
+		return false;
+	}
+
+	// Density is a property of the generated slab layout. Keeping a second
+	// size-class-number sieve here made the policy silently diverge when the
+	// native page size changed.
+	import d.gc.slab : binInfos;
+	return binInfos[sizeClass].dense;
 }
 
 bool isSparseSizeClass(uint sizeClass) {

@@ -6,6 +6,9 @@ version(linux) {
 } else version(Windows) {
 	import d.sync.win32.waiter;
 	alias Waiter = Win32Waiter;
+} else version(OSX) {
+	import d.sync.mach.waiter;
+	alias Waiter = MachWaiter;
 } else {
 	static assert(false, "Unsupported platform");
 }

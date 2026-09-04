@@ -153,6 +153,8 @@ int main(string[] args)
 		enum myPlatform = "windows";
 	else version(linux)
 		enum myPlatform = "linux";
+	else version(OSX)
+		enum myPlatform = "osx";
 	else static assert("Platform not supported yet!");
 	import std.getopt;
 	bool verbose = false;

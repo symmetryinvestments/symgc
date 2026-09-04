@@ -4,10 +4,15 @@ import d.gc.spec;
 import d.gc.util;
 
 version(linux) {
+	version = SymgcPosixMmap;
 	import core.sys.linux.sys.mman;
 
 	// not included in druntime for some reason
 	enum MADV_FREE = 8;
+}
+else version(OSX) {
+	version = SymgcPosixMmap;
+	import core.sys.darwin.sys.mman;
 }
 else version(Windows) {
 	import core.sys.windows.winbase;
@@ -63,7 +68,7 @@ void* pages_map(void* addr, size_t size, size_t alignment) {
 		}
 
 		auto leadSize = alignUpOffset(pages, alignment);
-		version (linux) {
+		version (SymgcPosixMmap) {
 			if (leadSize > 0) {
 				pages_unmap(pages, leadSize);
 			}
@@ -263,7 +268,7 @@ version(Windows)
 }
 
 void pages_unmap(void* addr, size_t size) {
-	version(linux) {
+	version(SymgcPosixMmap) {
 		auto ret = munmap(addr, size);
 		assert(ret == 0, "munmap failed!");
 	}
@@ -274,9 +279,23 @@ void pages_unmap(void* addr, size_t size) {
 }
 
 void pages_purge(void* addr, size_t size) {
-	version(linux) {
-		auto ret = madvise(addr, size, MADV_DONTNEED);
-		assert(ret == 0, "madvise failed!");
+	version(SymgcPosixMmap) {
+		version (OSX) {
+			/**
+			 * Darwin has no madvise flag with the semantics we need:
+			 * MADV_DONTNEED keeps the contents, MADV_FREE only releases the
+			 * pages under memory pressure and MADV_ZERO zeroes the pages but
+			 * keeps them resident. Mapping fresh anonymous pages over the
+			 * range releases the memory and guarantees zero filled pages, and
+			 * it is atomic at page granularity, which the rtree relies on.
+			 */
+			enum PurgeFlags = MAP_PRIVATE | MAP_ANON | MAP_FIXED | MAP_NORESERVE;
+			auto ret = mmap(addr, size, PROT_READ | PROT_WRITE, PurgeFlags, -1, 0);
+			assert(ret is addr, "mmap failed!");
+		} else {
+			auto ret = madvise(addr, size, MADV_DONTNEED);
+			assert(ret == 0, "madvise failed!");
+		}
 	} else version(Windows) {
 		/**
 		 * This used to discard the result. A decommit that straddles two
@@ -306,7 +325,7 @@ void pages_purge(void* addr, size_t size) {
 }
 
 void pages_purge_lazy(void* addr, size_t size) {
-	version (linux) {
+	version (SymgcPosixMmap) {
 		auto ret = madvise(addr, size, MADV_FREE);
 		assert(ret == 0, "madvise failed!");
 	} else version (Windows) {
@@ -410,15 +429,18 @@ void* os_pages_map(void* addr, size_t size, size_t alignment) {
 	assert(isAligned(addr, alignment), "Invalid addr!");
 	assert(size > 0 && isAligned(size, PageSize), "Invalid size!");
 
-	version(linux) {
+	version(SymgcPosixMmap) {
 		enum PagesFDTag = -1;
-		enum MMapFlags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
+		version (linux) {
+			enum MMapFlags = MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE;
+		} else {
+			enum MMapFlags = MAP_PRIVATE | MAP_ANON | MAP_NORESERVE;
+		}
 
 		auto ret =
 			mmap(addr, size, PROT_READ | PROT_WRITE, MMapFlags, PagesFDTag, 0);
 		assert(ret !is null);
 
-		enum MAP_FAILED = cast(void*) -1L;
 		if (ret is MAP_FAILED) {
 			return null;
 		}

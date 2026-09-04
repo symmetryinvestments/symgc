@@ -44,7 +44,11 @@ bool isHugeSize(size_t size) {
 }
 
 @"sizePredicates" unittest {
-	assert(MaxSmallSize == 14336, "Unexpected max small size!");
+	version (OSX) {
+		assert(MaxSmallSize == 57344, "Unexpected max small size!");
+	} else {
+		assert(MaxSmallSize == 14336, "Unexpected max small size!");
+	}
 	assert(MaxLargeSize == 1835008, "Unexpected max large size!");
 
 	assert(!isSmallSize(0));
