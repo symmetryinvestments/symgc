@@ -9,6 +9,11 @@ import d.gc.sizeclass;
 import d.gc.spec;
 import d.gc.util;
 
+// The slab bitmaps scale with the number of slots a page can hold.
+alias SlabBitmap = Bitmap!MaxSlotsPerSlab;
+alias SlabMarkBitmap = Bitmap!(MaxSlotsPerSlab / 4);
+alias SlabFlagBitmap = Bitmap!(MaxSlotsPerSlab / 2);
+
 struct ExtentClass {
 	ubyte data;
 
@@ -51,9 +56,7 @@ struct ExtentClass {
 
 	@property
 	bool dense() const {
-		enum Sieve = 1 << 0 | 1 << 16 | 1 << 20 | 1 << 22;
-		auto match = Sieve & (1 << data);
-		return !match && data < 24;
+		return !isLarge() && isDenseSizeClass(sizeClass);
 	}
 
 	@property
@@ -63,12 +66,12 @@ struct ExtentClass {
 
 	@property
 	bool supportsMetadata() const {
-		return data != 1;
+		return data == 0 || sizeClassSupportsMetadata(data - 1);
 	}
 
 	@property
 	bool supportsInlineMarking() const {
-		return uint(data - 1) > 2;
+		return data == 0 || sizeClassSupportsInlineMarking(data - 1);
 	}
 }
 
@@ -115,6 +118,11 @@ private:
 	enum FreeSlotsIndex = 48;
 	package enum FreeSlotsUnit = 1UL << FreeSlotsIndex;
 
+	// Enough bits to count every slot in a slab, including a full slab.
+	enum FreeSlotsBits = log2floor(MaxSlotsPerSlab) + 1;
+	static assert(FreeSlotsIndex + FreeSlotsBits <= 8 * bits.sizeof,
+	              "Not enough space for the free slot count!");
+
 public:
 	uint _npages;
 	ExtentClass extentClass;
@@ -142,7 +150,7 @@ private:
 	 */
 	union GCMetadata {
 		ulong* outlineBuffer;
-		shared(Bitmap!512)* outlineBitmap;
+		shared(SlabBitmap)* outlineBitmap;
 		shared Atomic!ulong gcWord;
 	}
 
@@ -160,10 +168,12 @@ private:
 	 *  - f: Whether the slot has metadata.
 	 *  - m: Mark bits for the GC.
 	 *
-	 *      0      128      256              512
-	 * 512: bbbbbbbb bbbbbbbb bbbbbbbb bbbbbbbb
-	 * 256: bbbbbbbb bbbbbbbb ffffffff ffffffff
-	 * 128: bbbbbbbb mmmmmmmm ffffffff ........
+	 * With N = MaxSlotsPerSlab (512 on 4 KiB pages, 2048 on 16 KiB pages):
+	 *
+	 *      0      N/4      N/2                N
+	 *   N: bbbbbbbb bbbbbbbb bbbbbbbb bbbbbbbb
+	 * N/2: bbbbbbbb bbbbbbbb ffffffff ffffffff
+	 * N/4: bbbbbbbb mmmmmmmm ffffffff ........
 	 *
 	 * When a metadata flag is required, but no space is available for
 	 * them in the bitfields, we expect the GC to use the next size class.
@@ -184,13 +194,16 @@ private:
 	 *        size class 2 to be marked inline.
 	 */
 	struct SlabMetadata {
-		ulong[2] pad;
-		shared Bitmap!128 marks;
-		shared Bitmap!256 flags;
+		ulong[MaxSlotsPerSlab / 256] pad;
+		shared SlabMarkBitmap marks;
+		shared SlabFlagBitmap flags;
 	}
 
+	static assert(SlabMetadata.sizeof == SlabBitmap.sizeof,
+	              "Slab metadata must overlay the occupancy bitmap exactly!");
+
 	union Bitmaps {
-		Bitmap!512 slabData;
+		SlabBitmap slabData;
 		SlabMetadata slabMetadata;
 	}
 
@@ -355,7 +368,7 @@ public:
 		// FIXME: in contract.
 		assert(isSlab(), "nfree accessed on non slab!");
 
-		enum Mask = (1 << 10) - 1;
+		enum Mask = (1 << FreeSlotsBits) - 1;
 		return (bits >> FreeSlotsIndex) & Mask;
 	}
 
@@ -415,7 +428,7 @@ public:
 	 * Metadata features for slabs.
 	 */
 	@property
-	ref Bitmap!512 slabData() {
+	ref SlabBitmap slabData() {
 		// FIXME: in contract.
 		assert(isSlab(), "slabData accessed on non slab!");
 
@@ -423,7 +436,7 @@ public:
 	}
 
 	@property
-	ref shared(Bitmap!256) slabMetadataFlags() {
+	ref shared(SlabFlagBitmap) slabMetadataFlags() {
 		assert(extentClass.supportsMetadata,
 		       "size class not supports slab metadata!");
 
@@ -455,7 +468,7 @@ public:
 	}
 
 	@property
-	ref shared(Bitmap!128) slabMetadataMarks() {
+	ref shared(SlabMarkBitmap) slabMetadataMarks() {
 		assert(extentClass.dense, "size class not dense!");
 		assert(extentClass.supportsInlineMarking,
 		       "size class not supports inline marking!");
@@ -473,7 +486,7 @@ public:
 	}
 
 	@property
-	ref shared(Bitmap!512) outlineMarks() {
+	ref shared(SlabBitmap) outlineMarks() {
 		assert(extentClass.dense, "size class not dense!");
 		assert(!extentClass.supportsInlineMarking,
 		       "size class supports inline marking!");
@@ -618,7 +631,7 @@ private:
 	e.at(ptr, PageCount, null);
 
 	assert(e.finalizer is null);
-	assert(e.usedCapacity == 20480);
+	assert(e.usedCapacity == PageCount * PageSize);
 
 	e.setUsedCapacity(20000);
 	assert(e.finalizer is null);
@@ -633,8 +646,8 @@ private:
 	assert(e.usedCapacity == 20400);
 }
 
-static assert(Extent.sizeof == ExtentSize, "Unexpected Extent size!");
-static assert(Extent.sizeof == ExtentAlign, "Unexpected Extent alignment!");
+static assert(Extent.sizeof <= ExtentSize, "Extent does not fit its slot!");
+static assert(ExtentSize == ExtentAlign, "Extent alignment must equal its slot size!");
 
 alias PriorityExtentHeap = Heap!(Extent, priorityExtentCmp);
 
@@ -659,13 +672,15 @@ ptrdiff_t priorityExtentCmp(Extent* lhs, Extent* rhs) {
 }
 
 @"priority" unittest {
+	import d.gc.slab : binInfos;
+
 	static makeExtent(void* address, uint nalloc) {
 		Extent e;
 		e.at(address, 1, null, ExtentClass.slab(0));
 		e.bits -= nalloc * Extent.FreeSlotsUnit;
 
 		assert(e.address is address);
-		assert(e.nfree == (512 - nalloc));
+		assert(e.nfree == (binInfos[0].nslots - nalloc));
 		return e;
 	}
 
@@ -744,7 +759,7 @@ ptrdiff_t unusedExtentCmp(Extent* lhs, Extent* rhs) {
 }
 
 @"contains" unittest {
-	auto base = cast(void*) 0x56789abcd000;
+	auto base = cast(void*) (0x56789abcd000 & ~PageMask);
 	enum Pages = 13;
 	enum Size = Pages * PageSize;
 
@@ -760,6 +775,8 @@ ptrdiff_t unusedExtentCmp(Extent* lhs, Extent* rhs) {
 }
 
 @"allocfree" unittest {
+	import d.gc.slab : binInfos;
+
 	Extent e;
 	e.at(null, 1, null, ExtentClass.slab(0));
 
@@ -776,38 +793,42 @@ ptrdiff_t unusedExtentCmp(Extent* lhs, Extent* rhs) {
 
 	assert(e.isSlab());
 	assert(e.extentClass.sizeClass == 0);
-	assert(e.nfree == 512);
+	enum SlabSlots = binInfos[0].nslots;
+	assert(e.nfree == SlabSlots);
 
 	checkAllocate(e, 0);
-	assert(e.nfree == 511);
+	assert(e.nfree == SlabSlots - 1);
 
 	checkAllocate(e, 1);
-	assert(e.nfree == 510);
+	assert(e.nfree == SlabSlots - 2);
 
 	checkAllocate(e, 2);
-	assert(e.nfree == 509);
+	assert(e.nfree == SlabSlots - 3);
 
 	e.free(1);
-	assert(e.nfree == 510);
+	assert(e.nfree == SlabSlots - 2);
 
 	checkAllocate(e, 1);
-	assert(e.nfree == 509);
+	assert(e.nfree == SlabSlots - 3);
 
 	checkAllocate(e, 3);
-	assert(e.nfree == 508);
+	assert(e.nfree == SlabSlots - 4);
 
 	e.free(0);
 	e.free(3);
 	e.free(2);
 	e.free(1);
-	assert(e.nfree == 512);
+	assert(e.nfree == SlabSlots);
 }
 
 @"batchAllocate" unittest {
+	import d.gc.slab : binInfos;
+
 	Extent e;
 	e.at(null, 1, null, ExtentClass.slab(0));
 
-	void*[1025] buffer = void;
+	enum SlabSlots = binInfos[0].nslots;
+	void*[2 * SlabSlots + 1] buffer = void;
 
 	auto checkBatchAllocate(void** bottom, uint nfill, uint eCount,
 	                        uint preFree, uint postFree) {
@@ -826,34 +847,37 @@ ptrdiff_t unusedExtentCmp(Extent* lhs, Extent* rhs) {
 		assert(e.nfree == postFree);
 	}
 
-	checkBatchAllocate(buffer.ptr, 1024, 512, 512, 0);
-	foreach (i; 0 .. 512) {
+	checkBatchAllocate(buffer.ptr, 2 * SlabSlots, SlabSlots, SlabSlots, 0);
+	foreach (i; 0 .. SlabSlots) {
 		assert(i * PointerSize == cast(size_t) buffer[i]);
 	}
 
 	// Free half the elements.
-	foreach (i; 0 .. 256) {
+	foreach (i; 0 .. SlabSlots / 2) {
 		e.free(2 * i);
 	}
 
-	checkBatchAllocate(buffer.ptr, 512, 256, 256, 0);
-	foreach (i; 0 .. 256) {
+	checkBatchAllocate(buffer.ptr, SlabSlots, SlabSlots / 2,
+	                   SlabSlots / 2, 0);
+	foreach (i; 0 .. SlabSlots / 2) {
 		assert(2 * i * PointerSize == cast(size_t) buffer[i]);
 	}
 
 	// Free All the element but two in the middle
-	foreach (i; 0 .. 255) {
+	foreach (i; 0 .. SlabSlots / 2 - 1) {
 		e.free(i);
-		e.free(511 - i);
+		e.free(SlabSlots - 1 - i);
 	}
 
-	checkBatchAllocate(buffer.ptr, 500, 500, 510, 10);
+	enum FinalRequest = SlabSlots - 12;
+	checkBatchAllocate(buffer.ptr, FinalRequest, FinalRequest,
+	                   SlabSlots - 2, 10);
 
-	foreach (i; 0 .. 255) {
+	foreach (i; 0 .. SlabSlots / 2 - 1) {
 		assert(i * PointerSize == cast(size_t) buffer[i]);
 	}
 
-	foreach (i; 255 .. 500) {
+	foreach (i; SlabSlots / 2 - 1 .. FinalRequest) {
 		assert((i + 2) * PointerSize == cast(size_t) buffer[i]);
 	}
 }

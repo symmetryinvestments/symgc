@@ -23,11 +23,43 @@ auto computeCoreCount() {
 		import core.cpuid;
 		return threadsPerCPU();
 	}
+	else version(OSX) {
+		import core.sys.darwin.sys.sysctl : CTL_HW, HW_AVAILCPU, HW_NCPU,
+			sysctl;
+
+		int[2] mib = [CTL_HW, HW_AVAILCPU];
+		int count;
+		size_t length = count.sizeof;
+		if (sysctl(mib.ptr, mib.length, &count, &length, null, 0) != 0
+				|| count <= 0) {
+			mib[1] = HW_NCPU;
+			length = count.sizeof;
+			assert(sysctl(mib.ptr, mib.length, &count, &length, null, 0) == 0,
+			       "Unable to query the Darwin CPU count");
+		}
+
+		assert(count > 0, "Darwin reported no CPUs");
+		return cast(uint) count;
+	}
 }
 
 @"getCoreCount" unittest {
 	version(linux) {
 		import core.sys.linux.sys.sysinfo;
 		assert(getCoreCount() == get_nprocs());
+	}
+	else version(OSX) {
+		import core.sys.darwin.sys.sysctl : CTL_HW, HW_AVAILCPU, HW_NCPU,
+			sysctl;
+		int[2] mib = [CTL_HW, HW_AVAILCPU];
+		int count;
+		size_t length = count.sizeof;
+		assert(sysctl(mib.ptr, mib.length, &count, &length, null, 0) == 0);
+		if (count <= 0) {
+			mib[1] = HW_NCPU;
+			length = count.sizeof;
+			assert(sysctl(mib.ptr, mib.length, &count, &length, null, 0) == 0);
+		}
+		assert(getCoreCount() == count);
 	}
 }

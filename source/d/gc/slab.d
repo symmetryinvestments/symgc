@@ -6,6 +6,22 @@ import d.gc.size;
 import d.gc.spec;
 import d.gc.util;
 
+version (OSX) {
+	alias PackedFreeSpace = uint;
+	// The finalizer pointer is stored separately on Apple Silicon. Reserve
+	// one flag bit for it and use the other two high bits to encode the 1-, 2-,
+	// and 3-byte free-space cases without overwriting shared payload bytes.
+	enum FinalizerBit = 1u << 29;
+	enum SmallFreeSpace2Bit = 1u << 30;
+	enum SmallFreeSpace1Bit = 1u << 31;
+	enum FreeSpaceMask = FinalizerBit - 1;
+} else {
+	alias PackedFreeSpace = ushort;
+	enum FinalizerBit = 1 << 14;
+	enum SingleByteBit = 1 << 15;
+	enum FreeSpaceMask = ushort.max & ~(FinalizerBit | SingleByteBit);
+}
+
 enum InvalidBinID = 0xff;
 
 struct SlabEntry {
@@ -82,11 +98,13 @@ public:
 	assert(ec.sizeClass == 9);
 
 	auto ptr = cast(void*) 0x56789abcd123;
-	auto base = cast(void*) 0x56789abcc000;
-	auto slot = cast(void*) 0x56789abcd0e0;
+	import d.gc.util : alignDown;
+	auto base = alignDown(ptr, PageSize) - PageSize;
+	auto slotSize = binInfos[ec.sizeClass].slotSize;
+	auto slot = base + ((ptr - base) / slotSize) * slotSize;
 
 	auto se = SlabEntry(pd, ptr);
-	assert(se.index == 45);
+	assert(se.index == (ptr - base) / slotSize);
 	assert(se.base is base);
 	assert(se.sizeClass == 9);
 
@@ -95,22 +113,33 @@ public:
 
 	auto r0 = se.computeRange();
 	assert(r0.ptr is cast(const(void*)*) slot);
-	assert(r0.length == 12);
+	assert(r0.length == slotSize / PointerSize);
 }
 
 struct SlotMetadata {
 private:
-	struct FreeSpaceData {
-		ushort[size_t.sizeof / ushort.sizeof - 1] _pad;
-		ushort freeSpace;
-	}
-
-	union Data {
+	version (OSX) {
+		// A 16 KiB page makes the largest metadata-capable small slot larger
+		// than the 14-bit free-space field used on the other targets. Keep the
+		// finalizer pointer and free-space value in separate fields. Put the
+		// packed value at the very end of the slot metadata so it never overlaps
+		// a payload when only a few bytes remain free.
 		size_t finalizerData;
-		FreeSpaceData freeSpaceData;
-	}
+		uint _pad;
+		PackedFreeSpace freeSpaceData;
+	} else {
+		struct FreeSpaceData {
+			PackedFreeSpace[size_t.sizeof / PackedFreeSpace.sizeof - 1] _pad;
+			PackedFreeSpace freeSpace;
+		}
 
-	Data data;
+		union Data {
+			size_t finalizerData;
+			FreeSpaceData freeSpaceData;
+		}
+
+		Data data;
+	}
 
 public:
 	static SlotMetadata* fromBlock(void* ptr, size_t slotSize) {
@@ -119,36 +148,64 @@ public:
 
 	@property
 	size_t freeSpace() {
-		return readPackedFreeSpace(&data.freeSpaceData.freeSpace);
+		version (OSX) {
+			return readPackedFreeSpace(&freeSpaceData);
+		} else {
+			return readPackedFreeSpace(&data.freeSpaceData.freeSpace);
+		}
 	}
 
 	void setFreshFreeSpace(size_t size) {
 		assert(size > 0, "Attempt to set a slot metadata size of 0!");
 
-		writeFreshPackedFreeSpace(&data.freeSpaceData.freeSpace, size);
+		version (OSX) {
+			writeFreshPackedFreeSpace(&freeSpaceData, size);
+		} else {
+			writeFreshPackedFreeSpace(&data.freeSpaceData.freeSpace, size);
+		}
 	}
 
 	void setFreeSpace(size_t size) {
 		assert(size > 0, "Attempt to set a slot metadata size of 0!");
 
-		writePackedFreeSpace(&data.freeSpaceData.freeSpace, size);
+		version (OSX) {
+			writePackedFreeSpace(&freeSpaceData, size);
+		} else {
+			writePackedFreeSpace(&data.freeSpaceData.freeSpace, size);
+		}
 	}
 
 	@property
 	Finalizer finalizer() {
-		return hasFinalizer
-			? cast(Finalizer) (data.finalizerData & AddressMask)
-			: null;
+		version (OSX) {
+			return hasFinalizer
+				? cast(Finalizer) (finalizerData & AddressMask)
+				: null;
+		} else {
+			return hasFinalizer
+				? cast(Finalizer) (data.finalizerData & AddressMask)
+				: null;
+		}
 	}
 
 	@property
 	bool hasFinalizer() {
-		return (data.freeSpaceData.freeSpace & FinalizerBit) != 0;
+		version (OSX) {
+			return (freeSpaceData & FinalizerBit) != 0;
+		} else {
+			return (data.freeSpaceData.freeSpace & FinalizerBit) != 0;
+		}
 	}
+
 }
 
-static assert(SlotMetadata.sizeof == size_t.sizeof,
+version (OSX) {
+	static assert(SlotMetadata.sizeof == 2 * size_t.sizeof,
+			  "Unexpected Apple Silicon slot metadata size!");
+} else {
+	static assert(SlotMetadata.sizeof == size_t.sizeof,
 			  "SlotMetadata must fit in size_t!");
+}
 
 struct SlabAllocInfo {
 private:
@@ -189,7 +246,11 @@ public:
 
 	@property
 	size_t slotCapacity() {
-		return slotSize - (finalizerEnabled ? PointerSize : 0);
+		version (OSX) {
+			return slotSize - (finalizerEnabled ? SlotMetadata.sizeof : 0);
+		} else {
+			return slotSize - (finalizerEnabled ? PointerSize : 0);
+		}
 	}
 
 	@property
@@ -217,8 +278,21 @@ public:
 		assert(supportsMetadata, "size class not supports slab metadata!");
 
 		bool hasFinalizer = initialFinalizer !is null;
+		if (!hasFinalizer && initialUsedCapacity == slotSize) {
+			// A full non-finalized slot has no free bytes in which metadata is
+			// needed. In particular, do not overwrite its final bytes with a
+			// zero free-space marker.
+			e.disableMetadata(index);
+			_hasMetadata = false;
+			return;
+		}
+		version (OSX) {
+			enum FinalizerStorageSize = SlotMetadata.sizeof;
+		} else {
+			enum FinalizerStorageSize = PointerSize;
+		}
 		assert(
-			initialUsedCapacity <= slotSize - (hasFinalizer ? PointerSize : 0),
+			initialUsedCapacity <= slotSize - (hasFinalizer ? FinalizerStorageSize : 0),
 			"Insufficient alloc capacity!"
 		);
 
@@ -227,22 +301,31 @@ public:
 		       "New finalizer pointer is invalid!");
 
 		auto freeSpaceValue = slotSize - initialUsedCapacity;
-		ushort native;
-		if (freeSpaceValue == 1) {
-			assert(!hasFinalizer);
-			native = SingleByteBit;
+		version (OSX) {
+			if (hasFinalizer)
+				slotMetadata.finalizerData = finalizerValue;
+			writeFreshPackedFreeSpace(&slotMetadata.freeSpaceData,
+			                         freeSpaceValue);
+			if (hasFinalizer)
+				slotMetadata.freeSpaceData |= FinalizerBit;
 		} else {
-			auto finalizerSet = hasFinalizer ? FinalizerBit : 0;
-			native = (freeSpaceValue | finalizerSet) & ushort.max;
+			PackedFreeSpace native;
+			if (freeSpaceValue == 1) {
+				assert(!hasFinalizer);
+				native = SingleByteBit;
+			} else {
+				auto finalizerSet = hasFinalizer ? FinalizerBit : 0;
+				native = cast(PackedFreeSpace)
+					(freeSpaceValue | finalizerSet);
+			}
+
+			auto newMetadata = size_t(native) << 48;
+			// TODO: Currently only works on little-endian!!!
+			// On a big-endian machine, the unused high bits of a pointer will be
+			// found at the start, rather than end, of the memory that it occupies,
+			// and the freespace (newMetadata) will collide with the finalizer.
+			slotMetadata.data.finalizerData = newMetadata | finalizerValue;
 		}
-
-		auto newMetadata = size_t(native) << 48;
-
-		// TODO: Currently only works on little-endian!!!
-		// On a big-endian machine, the unused high 16 bits of a pointer will be
-		// found at the start, rather than end, of the memory that it occupies,
-		// and the freespace (newMetadata) will collide with the finalizer.
-		slotMetadata.data.finalizerData = newMetadata | finalizerValue;
 		e.enableMetadata(index);
 		_hasMetadata = true;
 	}
@@ -316,8 +399,8 @@ private:
 		auto slotSize = binInfos[ec.sizeClass].slotSize;
 		e.at(block, 1, null, ec);
 
-		void*[512] buffer = void;
-		e.batchAllocate(buffer.ptr, 512, slotSize);
+		void*[PageSize / PointerSize] buffer = void;
+		e.batchAllocate(buffer.ptr, cast(uint) buffer.length, slotSize);
 
 		auto pd = PageDescriptor(e, ec);
 		auto allocAddress = block + slotIndex * slotSize;
@@ -380,7 +463,12 @@ private:
 
 			// Test finalizers:
 			auto regularSlotCapacity = si.slotCapacity;
-			auto finalizedSlotCapacity = regularSlotCapacity - PointerSize;
+			version (OSX) {
+				enum FinalizerStorageSize = SlotMetadata.sizeof;
+			} else {
+				enum FinalizerStorageSize = PointerSize;
+			}
+			auto finalizedSlotCapacity = regularSlotCapacity - FinalizerStorageSize;
 
 			foreach (size_t i; 0 .. finalizedSlotCapacity + 1) {
 				// Without finalizer:
@@ -400,71 +488,155 @@ private:
 			}
 		}
 	}
+
+	version (OSX) {
+		// The packed value occupies the last four bytes of the metadata
+		// record. Exercise every short free-space encoding and verify that
+		// payload bytes shared with that record are preserved.
+		auto si = simulateSmallAlloc(64, 0);
+		auto slotSize = binInfos[getSizeClass(64)].slotSize;
+		auto payload = cast(ubyte*) si.address;
+		foreach (freeSpace; 1 .. 4) {
+			auto used = slotSize - freeSpace;
+			foreach (i; 0 .. used)
+				payload[i] = cast(ubyte) (i + freeSpace);
+			si.initializeMetadata(null, used);
+			assert(si.usedCapacity == used);
+			foreach (i; 0 .. used)
+				assert(payload[i] == cast(ubyte) (i + freeSpace));
+		}
+	}
 }
 
 /**
- * Packed Free Space is stored as a 14-bit unsigned integer, with 2 bits for flags.
+ * Packed Free Space is stored as a 14-bit unsigned integer, with 2 bits for
+ * flags on the existing platforms. Apple Silicon uses a 30-bit value so
+ * 16 KiB-page slabs can carry their larger size classes. On Apple Silicon,
+ * the high bits encode finalizers and free-space values 1, 2, and 3
+ * specially; this keeps the bytes occupied by the payload intact.
  *
- * 15     8 7      0
- * sfvvvvvv vvvvvvvv
+ * Existing platforms use the following layout:
+ * 15     14 13        0
+ * s f    vvvvvvvvvvvvvv
  *
  * s: small bit set if length == 1
  * f: finalizer bit = 1 if a finalizer is stored in allocation
  * v: free space, only set if length > 1
  *
- * If free space is only 1 byte, then the lower byte of the 16-bit value is
+ * Apple Silicon uses bit 29 for the finalizer marker, bits 31 and 30 as the
+ * encodings for free-space values 1, 2, and 3, and stores the finalizer
+ * pointer separately.
+ *
+ * If free space is only 1 byte, then the lower bytes of the value are
  * used by the allocation itself, and is not used while reading. Nor is it set
  * when writing the upper byte
  *
  * Note: little endian only! The lower 8 bits are stored first in memory.
  * For big endian support, we likely have to change the end where the bits go.
  */
-static assert(MaxSmallSize < 0x4000,
+version (OSX) {
+	static assert(MaxSmallSize <= FreeSpaceMask,
+			  "Max small alloc size does not fit in packed free space!");
+} else {
+	static assert(MaxSmallSize < 0x4000,
 			  "Max small alloc size doesn't fit in 14 bits!");
+}
 
-enum FinalizerBit = 1 << 14;
-enum SingleByteBit = 1 << 15;
-enum FreeSpaceMask = ushort.max & ~(FinalizerBit | SingleByteBit);
-
-size_t readPackedFreeSpace(ushort* ptr) {
+size_t readPackedFreeSpace(PackedFreeSpace* ptr) {
 	assert(isLittleEndian(),
 	       "Packed free space not implemented for big endian!");
 	auto data = *ptr;
-	auto value = data & FreeSpaceMask;
-	return (data & SingleByteBit) ? 1 : value;
+	version (OSX) {
+		auto flags = data & ~FreeSpaceMask;
+		if (flags == SmallFreeSpace1Bit)
+			return 1;
+		if (flags == SmallFreeSpace2Bit)
+			return 2;
+		if (flags == (SmallFreeSpace1Bit | SmallFreeSpace2Bit))
+			return 3;
+		return data & FreeSpaceMask;
+	} else {
+		auto value = data & FreeSpaceMask;
+		return (data & SingleByteBit) ? 1 : value;
+	}
 }
 
-void writeFreshPackedFreeSpace(ushort* ptr, size_t x) {
+void writeFreshPackedFreeSpace(PackedFreeSpace* ptr, size_t x) {
 	return writePackedFreeSpaceImpl!false(ptr, x);
 }
 
-void writePackedFreeSpace(ushort* ptr, size_t x) {
+void writePackedFreeSpace(PackedFreeSpace* ptr, size_t x) {
 	return writePackedFreeSpaceImpl!true(ptr, x);
 }
 
-void writePackedFreeSpaceImpl(bool PreserveFinalizer)(ushort* ptr, size_t x) {
-	assert(x < 0x4000, "x does not fit in 14 bits!");
+void writePackedFreeSpaceImpl(bool PreserveFinalizer)(PackedFreeSpace* ptr,
+		size_t x) {
+	version (OSX) {
+		assert(x <= FreeSpaceMask, "x does not fit in packed free space!");
+	} else {
+		assert(x < 0x4000, "x does not fit in 14 bits!");
+	}
 	assert(isLittleEndian(),
 	       "Packed free space not implemented for big endian!");
 
 	auto current = *ptr;
-	auto small = current | SingleByteBit;
-	auto large = x;
-	if (PreserveFinalizer) {
-		large |= current & FinalizerBit;
-	} else {
-		small &= ~FinalizerBit;
-	}
+	version (OSX) {
+		if (x == 0) {
+			*ptr = 0;
+			return;
+		}
+		if (x < 4) {
+			// The packed field is the final four bytes of the slot. Preserve
+			// the lower payload bytes that overlap it and use the high bits to
+			// describe how many trailing bytes are free.
+			auto preserveMask = uint.max >> (cast(uint) x * 8);
+			auto flags = x == 1 ? SmallFreeSpace1Bit
+				: x == 2 ? SmallFreeSpace2Bit
+				: SmallFreeSpace1Bit | SmallFreeSpace2Bit;
+			*ptr = (current & preserveMask) | flags;
+			return;
+		}
 
-	auto value = (x == 1 ? small : large);
-	*ptr = value & ushort.max;
+		auto large = cast(PackedFreeSpace) x;
+		if (PreserveFinalizer)
+			large |= current & FinalizerBit;
+		*ptr = large;
+		return;
+	} else {
+		auto small = current | SingleByteBit;
+		auto large = cast(PackedFreeSpace) x;
+		if (PreserveFinalizer) {
+			large |= current & FinalizerBit;
+		} else {
+			small &= ~FinalizerBit;
+		}
+
+		auto value = (x == 1 ? small : large);
+		*ptr = value & PackedFreeSpace.max;
+	}
 }
 
 @"packedFreeSpace" unittest {
-	ubyte[2] a;
-	auto p = cast(ushort*) a.ptr;
+	ubyte[4] a;
+	auto p = cast(uint*) a.ptr;
 
-	foreach (ushort i; 0 .. 0x4000) {
+	version (OSX) {
+		static void check(uint* ptr, size_t i) {
+			*ptr = 0;
+			writePackedFreeSpace(ptr, i);
+			assert(readPackedFreeSpace(ptr) == i);
+
+			// A fresh write must not retain any old packed flags.
+			*ptr = SmallFreeSpace1Bit | SmallFreeSpace2Bit;
+			writeFreshPackedFreeSpace(ptr, i);
+			assert(readPackedFreeSpace(ptr) == i);
+		}
+
+		foreach (uint i; 0 .. 0x4000)
+			check(p, i);
+		foreach (i; [0x4000u, 0x10000u, MaxSmallSize, FreeSpaceMask])
+			check(p, i);
+	} else foreach (ushort i; 0 .. 0x4000) {
 		// With finalizer bit set:
 		*p |= FinalizerBit;
 		writePackedFreeSpace(p, i);
@@ -542,14 +714,20 @@ struct BinInfo {
 		return !dense;
 	}
 
+	/**
+	 * The metadata flags and the mark bits share the extent's slab bitmap
+	 * with the occupancy bits, see Extent.SlabMetadata. Slabs with more
+	 * slots than fit alongside them use the next size class for metadata
+	 * and outlined buffers for marking.
+	 */
 	@property
 	bool supportsMetadata() const {
-		return nslots <= 256;
+		return nslots <= MaxSlotsPerSlab / 2;
 	}
 
 	@property
 	bool supportsInlineMarking() const {
-		return nslots <= 128;
+		return nslots <= MaxSlotsPerSlab / 4;
 	}
 }
 

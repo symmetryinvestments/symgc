@@ -8,9 +8,9 @@ The idea is to extract the GC portions of the SDC runtime (and everything needed
 
 ### OS/Arch
 
-* Intel/AMD 64-bit CPU.
-* AArch64 Linux 4k pages tested only!
-* Linux or Windows (so far)
+* x86-64 Linux or Windows.
+* AArch64 Linux with 4 KiB pages.
+* Apple Silicon macOS (AArch64) with 16 KiB pages.
 
 ### Compiler
 * ~~DMD 2.111 -> Linux only, does not include features needed for Windows support.~~ EDIT: this is not actually correct, and further tests have shown that Fiber-based cases do not work properly. For that reason, I recommend waiting for 2.112.
@@ -48,8 +48,8 @@ Multithreaded performance should be much better than the default GC, as symgc do
 
 - [ ] Provide mechanism to always include optimized GC.
 - [X] ARM 64-bit support.
-- [ ] ARM 64-bit support with 16k pages.
-- [ ] Mac/FreeBSD support.
+- [X] ARM 64-bit support with 16k pages.
+- [X] Apple Silicon macOS support.
 - [ ] Explore tuning parameters for memory consumption/performance
 - [ ] SIMD improvements for scanner.
 

@@ -7,6 +7,9 @@ import d.sync.atomic;
 
 import symgc.intrinsics;
 
+version(linux) version = SymgcCanPurgeRTree;
+else version(OSX) version = SymgcCanPurgeRTree;
+
 static assert(LgAddressSpace <= 48, "Address space too large!");
 
 enum HighInsignificantBits = 8 * PointerSize - LgAddressSpace;
@@ -166,7 +169,7 @@ public:
 
 			// Windows does not have an atomic way to zero large numbers of pages.
 			// So we cannot use pages_purge on Windows.
-			version(linux) {
+			version(SymgcCanPurgeRTree) {
 				// If we need to clear the whole page, do so via purging.
 				// XXX: We might want to do it for smaller runs, but this is
 				// more complicated as the alternative path requires atomic ops.
@@ -261,7 +264,11 @@ private:
 			return leaves;
 		}
 
-		leaves = cast(Leaves) base.reserveAndCommitAddressSpace(typeof(*leaves).sizeof);
+		// The cache stores the leaf pointer with BlockPointerMask, so the
+		// allocation must be aligned to BlockSize even when the leaf table is
+		// smaller than a block (as it is on 16 KiB-page targets).
+		leaves = cast(Leaves) base.reserveAndCommitAddressSpace(
+			typeof(*leaves).sizeof, BlockSize);
 		nodes[key0].data.store!(MemoryOrder.Relaxed)(cast(size_t) leaves);
 		return leaves;
 	}
@@ -372,20 +379,46 @@ bool isValidAddress(void* address) {
 	return (a & PagePointerMask) == a;
 }
 
+version(OSX) {
+	enum size_t TestPtr0 = 0x56789abcc000;
+	enum size_t TestPtr1 = 0x789abcdec000;
+	enum size_t TestPtr2 = 0xfedcba984000;
+	enum size_t TestRangePtr = 0x00007fffc000;
+	enum TestNode0 = 0xacf1;
+	enum TestLeaf0 = 0x6af3;
+	enum TestNode1 = 0xf135;
+	enum TestLeaf1 = 0xf37b;
+	enum TestNode2 = 0x1fdb9;
+	enum TestLeaf2 = 0xea61;
+	enum size_t TestCachePtr0 = 0x560000000000;
+} else {
+	enum size_t TestPtr0 = 0x56789abcd000;
+	enum size_t TestPtr1 = 0x789abcdef000;
+	enum size_t TestPtr2 = 0xfedcba987000;
+	enum size_t TestRangePtr = 0x00003ffff000;
+	enum TestNode0 = 0x159e2;
+	enum TestLeaf0 = 0x1abcd;
+	enum TestNode1 = 0x1e26;
+	enum TestLeaf1 = 0x3cdef;
+	enum TestNode2 = 0x3fb72;
+	enum TestLeaf2 = 0x3a987;
+	enum size_t TestCachePtr0 = 0x56781abcd000;
+}
+
 @"isValidAddress" unittest {
 	static checkIsValid(size_t value, bool expected) {
 		assert(isValidAddress(cast(void*) value) == expected);
 	}
 
-	checkIsValid(0x56789abcd000, true);
-	checkIsValid(0x789abcdef000, true);
-	checkIsValid(0xfedcba987000, true);
+	checkIsValid(0x56789abc0000, true);
+	checkIsValid(0x789abcde0000, true);
+	checkIsValid(0xfedcba980000, true);
 
 	checkIsValid(0, true);
 	checkIsValid(1, false);
 	checkIsValid(-1, false);
 	checkIsValid(12345, false);
-	checkIsValid(0xfffffffff000, true);
+	checkIsValid(0xffffffffc000, true);
 	checkIsValid(0x1000000000000, false);
 	checkIsValid(0xfffffffffffff000, false);
 
@@ -411,17 +444,31 @@ static subKey(void* ptr, uint level) {
 }
 
 @"subKey" unittest {
-	auto p = cast(void*) 0x56789abcd000;
-	assert(subKey(p, 0) == 0x159e2);
-	assert(subKey(p, 1) == 0x1abcd);
+	version(OSX) {
+		auto p = cast(void*) TestPtr0;
+		assert(subKey(p, 0) == TestNode0);
+		assert(subKey(p, 1) == TestLeaf0);
 
-	p = cast(void*) 0x789abcdef000;
-	assert(subKey(p, 0) == 0x1e26a);
-	assert(subKey(p, 1) == 0x3cdef);
+		p = cast(void*) TestPtr1;
+		assert(subKey(p, 0) == TestNode1);
+		assert(subKey(p, 1) == TestLeaf1);
 
-	p = cast(void*) 0xfedcba987000;
-	assert(subKey(p, 0) == 0x3fb72);
-	assert(subKey(p, 1) == 0x3a987);
+		p = cast(void*) TestPtr2;
+		assert(subKey(p, 0) == TestNode2);
+		assert(subKey(p, 1) == TestLeaf2);
+	} else {
+		auto p = cast(void*) TestPtr0;
+		assert(subKey(p, 0) == TestNode0);
+		assert(subKey(p, 1) == TestLeaf0);
+
+		p = cast(void*) TestPtr1;
+		assert(subKey(p, 0) == TestNode1);
+		assert(subKey(p, 1) == TestLeaf1);
+
+		p = cast(void*) TestPtr2;
+		assert(subKey(p, 0) == TestNode2);
+		assert(subKey(p, 1) == TestLeaf2);
+	}
 }
 
 @"spawn_leaves" unittest {
@@ -432,14 +479,14 @@ static subKey(void* ptr, uint level) {
 	rt.initialize(base);
 	RTreeCache!ulong cache;
 
-	auto p = cast(void*) 0x56789abcd000;
-	assert(rt.nodes[0x159e2].getLeaves() is null);
+	auto p = cast(void*) TestPtr0;
+	assert(rt.nodes[TestNode0].getLeaves() is null);
 	assert(rt.get(cache, p) is null);
-	assert(rt.nodes[0x159e2].getLeaves() is null);
+	assert(rt.nodes[TestNode0].getLeaves() is null);
 
 	// Allocate a leaf.
 	auto leaf = rt.getOrAllocate(cache, p, base);
-	assert(rt.nodes[0x159e2].getLeaves() !is null);
+	assert(rt.nodes[TestNode0].getLeaves() !is null);
 
 	// The leaf itself is null.
 	assert(leaf !is null);
@@ -450,8 +497,8 @@ static subKey(void* ptr, uint level) {
 	assert(rt.get(cache, p) is leaf);
 
 	// The leaf is where we epxect it to be.
-	auto leaves = rt.nodes[0x159e2].getLeaves();
-	assert(&(*leaves)[0x1abcd] is leaf);
+	auto leaves = rt.nodes[TestNode0].getLeaves();
+	assert(&(*leaves)[TestLeaf0] is leaf);
 }
 
 @"get_set_clear" unittest {
@@ -463,7 +510,7 @@ static subKey(void* ptr, uint level) {
 	RTreeCache!ulong cache;
 
 	// Add one page descriptor in the tree.
-	auto ptr0 = cast(void*) 0x56789abcd000;
+	auto ptr0 = cast(void*) TestPtr0;
 	auto v0 = 0x0123456789abcdef;
 
 	assert(rt.get(cache, ptr0) is null);
@@ -472,7 +519,7 @@ static subKey(void* ptr, uint level) {
 	assert(rt.get(cache, ptr0).load() == v0);
 
 	// Add a second page descriptor in the tree.
-	auto ptr1 = cast(void*) 0x789abcdef000;
+	auto ptr1 = cast(void*) TestPtr1;
 	auto v1 = 0x0123456789abcdef;
 
 	assert(rt.get(cache, ptr1) is null);
@@ -500,7 +547,7 @@ static subKey(void* ptr, uint level) {
 	assert(rt.get(cache, ptr1).load() == 0);
 
 	// We can also clear unmapped addresses.
-	auto ptr2 = cast(void*) 0xfedcba987000;
+	auto ptr2 = cast(void*) TestPtr2;
 	assert(rt.get(cache, ptr2) is null);
 	rt.clear(cache, ptr2);
 	assert(rt.get(cache, ptr2) is null);
@@ -515,7 +562,7 @@ static subKey(void* ptr, uint level) {
 	RTreeCache!ulong cache;
 
 	// Add one page descriptor in the tree.
-	auto ptr0 = cast(void*) 0x56789abcd000;
+	auto ptr0 = cast(void*) TestPtr0;
 	auto v0 = 0x0123456789abcdef;
 
 	assert(rt.get(cache, ptr0) is null);
@@ -524,7 +571,7 @@ static subKey(void* ptr, uint level) {
 	assert(rt.get(cache, ptr0).load() == v0);
 
 	// Add a second page descriptor in the tree.
-	auto ptr1 = cast(void*) 0x00003ffff000;
+	auto ptr1 = cast(void*) TestRangePtr;
 	auto v1 = 0x0123456789abcdef;
 
 	assert(rt.get(cache, ptr1) is null);
@@ -557,14 +604,14 @@ static subKey(void* ptr, uint level) {
 	}
 
 	rt.clearRange(cache, ptr1, 345678);
-	foreach (i; 0 .. 262145) {
+	foreach (i; 0 .. Level1Size + 1) {
 		auto v = v1 + i;
 		auto ptr = ptr1 + i * PageSize;
 
 		assert(rt.get(cache, ptr).load() == 0);
 	}
 
-	foreach (i; 262145 .. 345678) {
+	foreach (i; Level1Size + 1 .. 345678) {
 		auto v = v1 + i;
 		auto ptr = ptr1 + i * PageSize;
 
@@ -600,7 +647,7 @@ static subKey(void* ptr, uint level) {
 	}
 
 	// Add one page descriptor in the tree.
-	auto ptr0 = cast(void*) 0x56781abcd000;
+	auto ptr0 = cast(void*) TestCachePtr0;
 	auto v0 = 0x0123456789abcdef;
 
 	foreach (i; 0 .. L1Size) {

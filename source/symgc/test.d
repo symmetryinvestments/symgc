@@ -6,7 +6,7 @@ version(Symgc_testing):
 public import symgc.thread : ThreadHandle, sched_yield;
 
 // functions to create and join low level threads
-version(linux) {
+version(Posix) {
 	public import core.sys.posix.unistd : sleep, usleep;
 }
 else version(Windows) {
@@ -23,7 +23,7 @@ else version(Windows) {
 
 ThreadHandle runThread(void* delegate() dg) {
 	ThreadHandle tid;
-	version (linux) {
+	version (Posix) {
 		import core.sys.posix.pthread;
 		extern (C) void* function(void*) fptr;
 		fptr = cast(typeof(fptr)) dg.funcptr;
@@ -43,7 +43,7 @@ ThreadHandle runThread(void* delegate() dg) {
 }
 
 void* joinThread(ThreadHandle tid) {
-	version(linux) {
+	version(Posix) {
 		import core.sys.posix.pthread;
 		void* result;
 		pthread_join(tid, &result);

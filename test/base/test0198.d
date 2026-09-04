@@ -44,6 +44,10 @@ void allocateItem(size_t S)() {
 		// using druntime finalizers, we must add 1 to account for the finalizer subtracting 1.
 		auto destructor = cast(void*)typeid(T);
 		enum allocSize = T.sizeof + 1;
+	} else version(OSX) {
+		// Apple Silicon uses druntime finalizers, just like Windows.
+		auto destructor = cast(void*)typeid(T);
+		enum allocSize = T.sizeof + 1;
 	} else version(linux) {
 		auto destructor = &destroyItem!T;
 		enum allocSize = T.sizeof;

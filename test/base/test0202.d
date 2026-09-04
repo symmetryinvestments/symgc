@@ -23,7 +23,10 @@ extern(C) void __sd_gc_add_roots(const void[] range);
 
 // For Windows, which must commit on every allocation,
 // we cannot do 204GB of allocations.
+// Darwin faults in a physical page whenever the scanner reads an untouched
+// anonymous page, so it cannot afford 204GB of roots either.
 version(Windows) enum BufferSize = 8_000_000;
+else version(OSX) enum BufferSize = 8_000_000;
 else enum BufferSize = 800_000_000;
 
 void main() {

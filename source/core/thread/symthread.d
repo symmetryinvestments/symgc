@@ -18,6 +18,14 @@ private {
 		externDFunc!("core.thread.osthread.resume", void function(ThreadBase) nothrow @nogc);
 }
 
+// Darwin uses Mach suspension unless the pthread hook is in use, in which
+// case symgc's signal protocol drives suspension and these paths are unused.
+version(OSX) {
+	version(Symgc_pthread_hook) {} else {
+		version = SymgcMachSuspend;
+	}
+}
+
 private Thread toThread(return scope ThreadBase t) @trusted nothrow @nogc pure
 {
 	return cast(Thread) cast(void*) t;
@@ -79,7 +87,35 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 		if (tc is null) {
 			assert(0, "tlsGCData was not set for this thread!");
 		}
-		version (Posix)
+		version (SymgcMachSuspend)
+		{
+			// Darwin's druntime suspension primitive stops the Mach thread and
+			// captures its register state. Keep the symgc state machine separate
+			// from the signal path used by Linux.
+			auto ss = tc.suspendState;
+			suspended += ss == SuspendState.Suspended;
+			retry |= ss != SuspendState.Suspended;
+
+			if (ss != SuspendState.None)
+				continue;
+
+			tc.sendSuspendSignal();
+			if (core_thread_osthread_suspend(t)) {
+				if (tc.onSuspendSignal()) {
+					tc.markSuspended();
+					++suspended;
+					continue;
+				}
+
+				// The target was busy. Resume it before touching the shared
+				// delayed-thread counter; it may hold the counter's mutex.
+				core_thread_osthread_resume(t);
+				import d.gc.thread : delayedThreadInc;
+				delayedThreadInc();
+				retry = true;
+			}
+		}
+		else version (Posix)
 		{
 			// determine if this thread is suspended or should be suspended.
 			auto ss = tc.suspendState;
@@ -140,7 +176,25 @@ bool suspendDruntimeThreads(bool alwaysSignal, ref uint suspended) {
 				++suspended;
 			}
 		}
+	}
 
+	version(SymgcMachSuspend) if (retry) {
+		retry = false;
+		import d.gc.thread : waitForDelayedThreads;
+		waitForDelayedThreads();
+
+		foreach(t; ThreadIterator(ThreadBase.sm_tbeg.toThread))
+		{
+			auto tc = cast(ThreadCache*) t.tlsGCData();
+			assert(tc !is null);
+			if (tc.suspendState != SuspendState.Suspended) {
+				if (!core_thread_osthread_suspend(t)) {
+					assert(0, "could not suspend thread");
+				}
+				tc.markSuspended();
+				++suspended;
+			}
+		}
 	}
 
 	// suspend all the threads that are not us, but also record that we suspended "ourself"
@@ -185,7 +239,21 @@ bool resumeDruntimeThreads(ref uint suspended) {
 
 		auto ss = tc.suspendState;
 
-		version(Posix) {
+		version(SymgcMachSuspend) {
+			// Mach suspension is performed by the collector thread, so update
+			// the state before releasing the thread's Mach suspend count.
+			if (ss == SuspendState.Suspended) {
+				suspended++;
+				tc.sendResumeSignal();
+				tc.onResumeSignal();
+			} else {
+				// Unlike the signal-based POSIX path, Darwin updates the state
+				// synchronously above. Only a thread still moving toward probation
+				// requires another pass through the restart loop.
+				retry |= ss != SuspendState.Probation;
+				continue;
+			}
+		} else version(Posix) {
 			suspended += ss == SuspendState.Suspended;
 			retry |= ss != SuspendState.Probation;
 

@@ -22,7 +22,7 @@ alias PHNode = d.gc.heap.Node!Region;
 enum RefillSize = 1024 * 1024 * 1024;
 enum uint RefillBlockCount = RefillSize / BlockSize;
 
-static assert(RefillBlockCount == 512);
+static assert(RefillBlockCount > 0);
 
 @property
 shared(RegionAllocator)* gDataRegionAllocator() {
@@ -274,8 +274,8 @@ private:
 			return r;
 		}
 
-		static assert(ExtentSize / Region.sizeof == 2,
-		              "Unexpected Region size!");
+		static assert(ExtentSize / Region.sizeof >= 2,
+		              "Extent must hold multiple Regions!");
 
 		auto slot = base.allocSlot();
 		if (slot.address is null) {
