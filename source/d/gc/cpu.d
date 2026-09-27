@@ -19,6 +19,14 @@ auto computeCoreCount() {
 		sched_getaffinity(0, cpu_set_t.sizeof, &set);
 		return CPU_COUNT(&set);
 	}
+	else version(OSX) {
+		import core.sys.darwin.sys.sysctl;
+		uint coreCount;
+		size_t length = coreCount.sizeof;
+		auto ret = sysctlbyname("hw.ncpu", &coreCount, &length, null, 0);
+		assert(ret == 0, "sysctlbyname failed!");
+		return coreCount;
+	}
 	else version(Windows) {
 		import core.cpuid;
 		return threadsPerCPU();

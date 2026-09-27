@@ -327,7 +327,12 @@ private:
 		assert(blockFreeList is null, "There are blocks in the freelist!");
 
 		enum BlockPerExtent = ExtentSize / alignUp(Block.sizeof, Quantum);
-		static assert(BlockPerExtent == 5, "For documentation purposes.");
+		version(OSX) {
+			// 16k page systems use larger extents.
+			static assert(BlockPerExtent == 21, "For documentation purposes.");
+		} else {
+			static assert(BlockPerExtent == 5, "For documentation purposes.");
+		}
 
 		auto slot = allocSlotImpl();
 
@@ -388,7 +393,7 @@ struct Block {
 	assert(s0.generation == s1.generation);
 
 	auto prev = s1;
-	foreach (i; 0 .. 16381) {
+	foreach (i; 0 .. BlockSize / ExtentSize - 3) {
 		auto current = base.allocSlot();
 		assert(prev.address + ExtentSize is current.address);
 		assert(prev.generation == current.generation);
@@ -429,7 +434,7 @@ struct Block {
 	auto prev = base.allocSlot();
 	assert(indexInBlockGP(prev) == 1);
 
-	foreach (i; 2 .. 16382) {
+	foreach (i; 2 .. BlockSize / ExtentSize - 2) {
 		auto current = base.allocSlot();
 		assert(indexInBlockGP(current) == i);
 		assert(countBlocks(base) == 1);
@@ -445,11 +450,11 @@ struct Block {
 	}
 
 	auto b = base.allocBlock();
-	assert(indexInBlock(b) == 16382);
+	assert(indexInBlock(b) == BlockSize / ExtentSize - 2);
 	assert(countBlocks(base) == 1);
 
 	auto current = base.allocSlot();
-	assert(indexInBlockGP(current) == 16383);
+	assert(indexInBlockGP(current) == BlockSize / ExtentSize - 1);
 	assert(countBlocks(base) == 1);
 	assert(prev.generation == current.generation);
 

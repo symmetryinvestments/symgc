@@ -447,37 +447,73 @@ package:
 	checkFreeLarge(e3);
 
 	// Round 2.
-	auto e4 = makeLargeAlloc(128);
-	auto e5 = makeLargeAlloc(256);
-	assert(e5.address is e4.address + e4.size);
+	version(OSX) {
+		// 16k page systems have 128 pages per block instead of 512,
+		// scale the exact-fill arithmetic accordingly.
+		auto e4 = makeLargeAlloc(32);
+		auto e5 = makeLargeAlloc(64);
+		assert(e5.address is e4.address + e4.size);
 
-	auto e6 = makeLargeAlloc(128);
-	assert(e6.address is e5.address + e5.size);
+		auto e6 = makeLargeAlloc(32);
+		assert(e6.address is e5.address + e5.size);
 
-	auto block = e4.block;
-	assert(block.full);
+		auto block = e4.block;
+		assert(block.full);
 
-	// After we shrink something, the block isn't full anymore.
-	checkShrinkLarge(e4, 96);
-	assert(!block.full);
+		// After we shrink something, the block isn't full anymore.
+		checkShrinkLarge(e4, 24);
+		assert(!block.full);
 
-	checkShrinkLarge(e5, 128);
+		checkShrinkLarge(e5, 32);
 
-	// We check for the boundary condition, then shrink to the desired size.
-	checkShrinkLarge(e6, 127);
-	checkShrinkLarge(e6, 64);
+		// We check for the boundary condition, then shrink to the desired size.
+		checkShrinkLarge(e6, 31);
+		checkShrinkLarge(e6, 16);
 
-	// Allocate 128 pages, should go after e5.
-	auto e7 = makeLargeAlloc(128);
-	assert(e7.address is e5.address + e5.size);
+		// Allocate 32 pages, should go after e5.
+		auto e7 = makeLargeAlloc(32);
+		assert(e7.address is e5.address + e5.size);
 
-	// Allocate 32 pages, should go after e4.
-	auto e8 = makeLargeAlloc(32);
-	assert(e8.address is e4.address + e4.size);
+		// Allocate 8 pages, should go after e4.
+		auto e8 = makeLargeAlloc(8);
+		assert(e8.address is e4.address + e4.size);
 
-	// Allocate 64 pages, should go after e6.
-	auto e9 = makeLargeAlloc(64);
-	assert(e9.address is e6.address + e6.size);
+		// Allocate 16 pages, should go after e6.
+		auto e9 = makeLargeAlloc(16);
+		assert(e9.address is e6.address + e6.size);
+	} else {
+		auto e4 = makeLargeAlloc(128);
+		auto e5 = makeLargeAlloc(256);
+		assert(e5.address is e4.address + e4.size);
+
+		auto e6 = makeLargeAlloc(128);
+		assert(e6.address is e5.address + e5.size);
+
+		auto block = e4.block;
+		assert(block.full);
+
+		// After we shrink something, the block isn't full anymore.
+		checkShrinkLarge(e4, 96);
+		assert(!block.full);
+
+		checkShrinkLarge(e5, 128);
+
+		// We check for the boundary condition, then shrink to the desired size.
+		checkShrinkLarge(e6, 127);
+		checkShrinkLarge(e6, 64);
+
+		// Allocate 128 pages, should go after e5.
+		auto e7 = makeLargeAlloc(128);
+		assert(e7.address is e5.address + e5.size);
+
+		// Allocate 32 pages, should go after e4.
+		auto e8 = makeLargeAlloc(32);
+		assert(e8.address is e4.address + e4.size);
+
+		// Allocate 64 pages, should go after e6.
+		auto e9 = makeLargeAlloc(64);
+		assert(e9.address is e6.address + e6.size);
+	}
 
 	// Now full again.
 	assert(block.full);
@@ -581,30 +617,33 @@ package:
 		}
 	}
 
-	auto e0 = makeLargeAlloc(35);
-	auto e1 = makeLargeAlloc(64);
+	version(OSX) enum uint l0 = 8, l1 = 16, l2 = 32, g0 = 12, lc = 25;
+	else enum uint l0 = 35, l1 = 64, l2 = 128, g0 = 44, lc = 100;
+
+	auto e0 = makeLargeAlloc(l0);
+	auto e1 = makeLargeAlloc(l1);
 	assert(e1.address is e0.address + e0.size);
-	auto e2 = makeLargeAlloc(128);
+	auto e2 = makeLargeAlloc(l2);
 	assert(e2.address is e1.address + e1.size);
 
 	// We cannot grow if there isn't enough space.
-	assert(!arena.growLarge(emap, e0, 36));
-	assert(!arena.growLarge(emap, e2, 414));
+	assert(!arena.growLarge(emap, e0, l0 + 1));
+	assert(!arena.growLarge(emap, e2, PagesInBlock - l0 - l1 + 1));
 
 	// But we can if there is space left.
-	checkGrowLarge(e2, 413);
+	checkGrowLarge(e2, PagesInBlock - l0 - l1);
 
 	checkFreeLarge(e1);
-	checkGrowLarge(e0, 44);
+	checkGrowLarge(e0, g0);
 
-	// There are 99 pages left after e0.
+	// There are lc pages left after e0.
 	// Anything larger than this will fail.
 	assert(!arena.growLarge(emap, e0, uint.max));
 	assert(!arena.growLarge(emap, e0, 9999));
-	assert(!arena.growLarge(emap, e0, 100));
+	assert(!arena.growLarge(emap, e0, l0 + l1 + 1));
 
-	// Grow to take over the 99 remaining pages.
-	checkGrowLarge(e0, 99);
+	// Grow to take over the remaining pages.
+	checkGrowLarge(e0, l0 + l1);
 	assert(e0.block.full);
 
 	checkFreeLarge(e2);
@@ -616,10 +655,10 @@ package:
 	checkFreeLarge(e0);
 
 	// Turn a large allocation into a huge one.
-	auto e3 = makeLargeAlloc(35);
+	auto e3 = makeLargeAlloc(l0);
 	assert(e3.blockIndex == 0, "e3 must start the block!");
 
-	auto e8 = makeLargeAlloc(64);
+	auto e8 = makeLargeAlloc(l1);
 	assert(e8.address is e3.address + e3.size);
 
 	// e8 does not start the block. It can grow but not become huge.
@@ -638,9 +677,9 @@ package:
 	checkGrowLarge(e3, 2 * PagesInBlock);
 
 	// Check cross block boundary scenarii.
-	auto e4 = makeLargeAlloc(100);
+	auto e4 = makeLargeAlloc(lc);
 	assert(e4.address is e3.address + e3.size);
-	auto e5 = makeLargeAlloc(100);
+	auto e5 = makeLargeAlloc(lc);
 	assert(e5.address is e4.address + e4.size);
 
 	// We cannot grow past the block boundary is the next block is used.
@@ -655,21 +694,21 @@ package:
 	checkGrowLarge(e3, 2 * PagesInBlock + 1);
 
 	// We can grow huge allocation within their trailing block.
-	auto e6 = makeLargeAlloc(100);
+	auto e6 = makeLargeAlloc(lc);
 	assert(e6.address is e3.address + e3.size);
-	auto e7 = makeLargeAlloc(100);
+	auto e7 = makeLargeAlloc(lc);
 	assert(e7.address is e6.address + e6.size);
 
 	// There is no room.
 	assert(!arena.growLarge(emap, e3, 2 * PagesInBlock + 2));
 
-	// There is 100 block to be used.
+	// There is lc block to be used.
 	checkFreeLarge(e6);
 	checkGrowLarge(e3, 2 * PagesInBlock + 2);
-	checkGrowLarge(e3, 2 * PagesInBlock + 101);
+	checkGrowLarge(e3, 2 * PagesInBlock + lc + 1);
 
 	// But only up to the point we run into e7.
-	assert(!arena.growLarge(emap, e3, 2 * PagesInBlock + 102));
+	assert(!arena.growLarge(emap, e3, 2 * PagesInBlock + lc + 2));
 
 	// Make sure the check also work when trying to cross block boundaries.
 	assert(!arena.growLarge(emap, e3, 3 * PagesInBlock));

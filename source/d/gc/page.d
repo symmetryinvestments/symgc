@@ -789,7 +789,7 @@ private:
 				import d.gc.sizeclass;
 				if (ec.supportsInlineMarking) {
 					import d.gc.bitmap;
-					auto bmp = cast(Bitmap!128*) &e.slabMetadataMarks();
+					auto bmp = cast(Bitmap!MaxMarkSlots*) &e.slabMetadataMarks();
 					bmp.clear();
 					continue;
 				}

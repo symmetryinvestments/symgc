@@ -2,6 +2,13 @@ module d.gc.tstate;
 
 import symgc.intrinsics;
 
+/**
+ * Platforms where suspension is driven by the suspending thread, and
+ * delayed threads park themselves on the GC busy event.
+ */
+version(Windows) version = Symgc_BusyWaitSuspension;
+else version(OSX) version = Symgc_BusyWaitSuspension;
+
 enum SuspendState {
 	// The thread is running as usual.
 	None,
@@ -258,7 +265,7 @@ private:
 	checkForState(SuspendState.None);
 	checkForState(SuspendState.Signaled);
 }
-version(Posix)
+version(linux)
 @"suspend" unittest {
 	import d.gc.signal;
 	import symgc.test;
@@ -430,7 +437,7 @@ version(Posix)
 	moveToNextStep();
 }
 
-version(Windows)
+version(Symgc_BusyWaitSuspension)
 @"suspend" unittest {
 	import symgc.test;
 	import d.gc.thread;

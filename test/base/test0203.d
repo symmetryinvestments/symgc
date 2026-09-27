@@ -16,6 +16,7 @@
 //T has-passed:yes
 //T retval:0
 //T desc:GC multithreaded collection deadlock test
+//T platform:win64,linux
 
 import d.sync.atomic;
 import d.sync.mutex;

@@ -1,6 +1,9 @@
 module d.gc.fork;
 
-version(linux):
+version(linux) version = Symgc_AtFork;
+else version(OSX) version = Symgc_AtFork;
+
+version(Symgc_AtFork):
 
 import core.sys.posix.pthread;
 

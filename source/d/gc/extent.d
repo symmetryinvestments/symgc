@@ -68,7 +68,14 @@ struct ExtentClass {
 
 	@property
 	bool supportsInlineMarking() const {
-		return uint(data - 1) > 2;
+		if (!isSlab()) {
+			return true;
+		}
+
+		// Whether the slots fit in the inline marks region depends on
+		// the number of slots, which varies with the page size.
+		import d.gc.slab;
+		return binInfos[sizeClass].supportsInlineMarking;
 	}
 }
 
@@ -142,7 +149,7 @@ private:
 	 */
 	union GCMetadata {
 		ulong* outlineBuffer;
-		shared(Bitmap!512)* outlineBitmap;
+		shared(Bitmap!MaxSlabSlots)* outlineBitmap;
 		shared Atomic!ulong gcWord;
 	}
 
@@ -184,13 +191,13 @@ private:
 	 *        size class 2 to be marked inline.
 	 */
 	struct SlabMetadata {
-		ulong[2] pad;
-		shared Bitmap!128 marks;
-		shared Bitmap!256 flags;
+		shared Bitmap!(MaxSlabSlots / 4) pad;
+		shared Bitmap!MaxMarkSlots marks;
+		shared Bitmap!MaxFlagSlots flags;
 	}
 
 	union Bitmaps {
-		Bitmap!512 slabData;
+		Bitmap!MaxSlabSlots slabData;
 		SlabMetadata slabMetadata;
 	}
 
@@ -211,6 +218,19 @@ private:
 	}
 
 	Metadata _metadata;
+
+private:
+	/**
+	 * Everything before the metadata occupies a fixed header size:
+	 * bits, npages, extentClass and generation (aligned up to pointer
+	 * alignment), then block, phnode, gcMetadata and pad1.
+	 */
+	enum ExtentHeaderSize = alignUp(8 + 4 + 1 + 1, 8)
+		+ (BlockDescriptor*).sizeof + (Node!Extent).sizeof
+		+ GCMetadata.sizeof + void*.sizeof;
+
+	// Pad the extent so it always occupies exactly ExtentSize bytes.
+	ubyte[ExtentSize - ExtentHeaderSize - Metadata.sizeof] _extentPad;
 
 	this(uint arenaIndex, void* ptr, uint npages, ubyte generation,
 	     BlockDescriptor* block, ExtentClass extentClass) {
@@ -355,7 +375,7 @@ public:
 		// FIXME: in contract.
 		assert(isSlab(), "nfree accessed on non slab!");
 
-		enum Mask = (1 << 10) - 1;
+		enum Mask = ushort.max;
 		return (bits >> FreeSlotsIndex) & Mask;
 	}
 
@@ -415,7 +435,7 @@ public:
 	 * Metadata features for slabs.
 	 */
 	@property
-	ref Bitmap!512 slabData() {
+	ref Bitmap!MaxSlabSlots slabData() {
 		// FIXME: in contract.
 		assert(isSlab(), "slabData accessed on non slab!");
 
@@ -423,7 +443,7 @@ public:
 	}
 
 	@property
-	ref shared(Bitmap!256) slabMetadataFlags() {
+	ref shared(Bitmap!MaxFlagSlots) slabMetadataFlags() {
 		assert(extentClass.supportsMetadata,
 		       "size class not supports slab metadata!");
 
@@ -455,7 +475,7 @@ public:
 	}
 
 	@property
-	ref shared(Bitmap!128) slabMetadataMarks() {
+	ref shared(Bitmap!MaxMarkSlots) slabMetadataMarks() {
 		assert(extentClass.dense, "size class not dense!");
 		assert(extentClass.supportsInlineMarking,
 		       "size class not supports inline marking!");
@@ -473,7 +493,7 @@ public:
 	}
 
 	@property
-	ref shared(Bitmap!512) outlineMarks() {
+	ref shared(Bitmap!MaxSlabSlots) outlineMarks() {
 		assert(extentClass.dense, "size class not dense!");
 		assert(!extentClass.supportsInlineMarking,
 		       "size class supports inline marking!");
@@ -618,7 +638,7 @@ private:
 	e.at(ptr, PageCount, null);
 
 	assert(e.finalizer is null);
-	assert(e.usedCapacity == 20480);
+	assert(e.usedCapacity == PageCount * PageSize);
 
 	e.setUsedCapacity(20000);
 	assert(e.finalizer is null);
@@ -660,12 +680,14 @@ ptrdiff_t priorityExtentCmp(Extent* lhs, Extent* rhs) {
 
 @"priority" unittest {
 	static makeExtent(void* address, uint nalloc) {
+		import d.gc.slab;
+
 		Extent e;
 		e.at(address, 1, null, ExtentClass.slab(0));
 		e.bits -= nalloc * Extent.FreeSlotsUnit;
 
 		assert(e.address is address);
-		assert(e.nfree == (512 - nalloc));
+		assert(e.nfree == (binInfos[0].nslots - nalloc));
 		return e;
 	}
 
@@ -744,7 +766,7 @@ ptrdiff_t unusedExtentCmp(Extent* lhs, Extent* rhs) {
 }
 
 @"contains" unittest {
-	auto base = cast(void*) 0x56789abcd000;
+	auto base = alignUp(cast(void*) 0x56789abcd000, PageSize);
 	enum Pages = 13;
 	enum Size = Pages * PageSize;
 
@@ -776,38 +798,46 @@ ptrdiff_t unusedExtentCmp(Extent* lhs, Extent* rhs) {
 
 	assert(e.isSlab());
 	assert(e.extentClass.sizeClass == 0);
-	assert(e.nfree == 512);
+
+	import d.gc.slab;
+	enum N = binInfos[0].nslots;
+
+	assert(e.nfree == N);
 
 	checkAllocate(e, 0);
-	assert(e.nfree == 511);
+	assert(e.nfree == N - 1);
 
 	checkAllocate(e, 1);
-	assert(e.nfree == 510);
+	assert(e.nfree == N - 2);
 
 	checkAllocate(e, 2);
-	assert(e.nfree == 509);
+	assert(e.nfree == N - 3);
 
 	e.free(1);
-	assert(e.nfree == 510);
+	assert(e.nfree == N - 2);
 
 	checkAllocate(e, 1);
-	assert(e.nfree == 509);
+	assert(e.nfree == N - 3);
 
 	checkAllocate(e, 3);
-	assert(e.nfree == 508);
+	assert(e.nfree == N - 4);
 
 	e.free(0);
 	e.free(3);
 	e.free(2);
 	e.free(1);
-	assert(e.nfree == 512);
+	assert(e.nfree == N);
 }
 
 @"batchAllocate" unittest {
+	import d.gc.slab;
+
 	Extent e;
 	e.at(null, 1, null, ExtentClass.slab(0));
 
-	void*[1025] buffer = void;
+	enum N = binInfos[0].nslots;
+
+	void*[2 * N + 1] buffer = void;
 
 	auto checkBatchAllocate(void** bottom, uint nfill, uint eCount,
 	                        uint preFree, uint postFree) {
@@ -826,34 +856,35 @@ ptrdiff_t unusedExtentCmp(Extent* lhs, Extent* rhs) {
 		assert(e.nfree == postFree);
 	}
 
-	checkBatchAllocate(buffer.ptr, 1024, 512, 512, 0);
-	foreach (i; 0 .. 512) {
+	checkBatchAllocate(buffer.ptr, 2 * N, N, N, 0);
+	foreach (i; 0 .. N) {
 		assert(i * PointerSize == cast(size_t) buffer[i]);
 	}
 
 	// Free half the elements.
-	foreach (i; 0 .. 256) {
+	foreach (i; 0 .. N / 2) {
 		e.free(2 * i);
 	}
 
-	checkBatchAllocate(buffer.ptr, 512, 256, 256, 0);
-	foreach (i; 0 .. 256) {
+	checkBatchAllocate(buffer.ptr, N / 2, N / 2, N / 2, 0);
+	foreach (i; 0 .. N / 2) {
 		assert(2 * i * PointerSize == cast(size_t) buffer[i]);
 	}
 
 	// Free All the element but two in the middle
-	foreach (i; 0 .. 255) {
+	foreach (i; 0 .. N / 2 - 1) {
 		e.free(i);
-		e.free(511 - i);
+		e.free(N - 1 - i);
 	}
 
-	checkBatchAllocate(buffer.ptr, 500, 500, 510, 10);
+	enum Request = N - 48;
+	checkBatchAllocate(buffer.ptr, Request, Request, N - 2, N - Request - 2);
 
-	foreach (i; 0 .. 255) {
+	foreach (i; 0 .. N / 2 - 1) {
 		assert(i * PointerSize == cast(size_t) buffer[i]);
 	}
 
-	foreach (i; 255 .. 500) {
+	foreach (i; N / 2 - 1 .. Request) {
 		assert((i + 2) * PointerSize == cast(size_t) buffer[i]);
 	}
 }

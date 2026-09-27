@@ -5,6 +5,14 @@ import d.gc.tcache;
 import d.gc.tstate;
 import d.gc.types;
 
+/**
+ * Platforms where threads are suspended by the suspending thread, and
+ * delayed threads park themselves on the GC busy event until the world
+ * is restarted.
+ */
+version(Windows) version = Symgc_GCBusyEvent;
+else version(OSX) version = Symgc_GCBusyEvent;
+
 void createProcess() {
 	import d.gc.base;
 	import d.gc.arena;
@@ -21,6 +29,10 @@ void createProcess() {
 
 		import d.gc.signal;
 		setupSignals();
+	}
+	else version(OSX) {
+		import d.gc.fork;
+		setupFork();
 	}
 	initThread();
 
@@ -123,12 +135,12 @@ void suspendThreadDelayed(d.gc.tstate.ThreadState* tstate) {
 	version(linux) {
 		import d.gc.signal : suspendThreadDelayedWithSignals;
 		suspendThreadDelayedWithSignals(tstate);
-	} else version(Windows) {
+	} else version(Symgc_GCBusyEvent) {
 		gThreadState.suspendThreadDelayedNoSignals(tstate);
 	}
 }
 
-version(Windows) {
+version(Symgc_GCBusyEvent) {
 	void delayedThreadInc() {
 		gThreadState.delayedThreadInc();
 	}
@@ -145,14 +157,14 @@ version(Windows) {
 version(Symgc_testing) {
 	void simulateStopTheWorld() {
 		gThreadState.stopTheWorldLock.exclusiveLock();
-		version(Windows) {
+		version(Symgc_GCBusyEvent) {
 			ThreadState.gcBusyEvent.initialize(true, false);
 			ThreadState.gcBusyEvent.reset();
 		}
 	}
 
 	void simulateResumeTheWorld() {
-		version(Windows) {
+		version(Symgc_GCBusyEvent) {
 			ThreadState.gcBusyEvent.setIfInitialized();
 		}
 		gThreadState.stopTheWorldLock.exclusiveUnlock();
@@ -192,7 +204,7 @@ private:
 
 	uint registeredThreadCount = 0;
 	uint suspendedThreadCount = 0;
-	version(Windows) {
+	version(Symgc_GCBusyEvent) {
 		int delayedThreadCount;
 		import core.sync.event;
 		__gshared Event gcBusyEvent;
@@ -262,7 +274,7 @@ public:
 		// Prevent any new threads from being created
 		stopTheWorldLock.exclusiveLock();
 
-		version(Windows) {
+		version(Symgc_GCBusyEvent) {
 			gcBusyEvent.initialize(true, false);
 			gcBusyEvent.reset();
 		}
@@ -275,7 +287,7 @@ public:
 		}
 	}
 
-	version(Windows) {
+	version(Symgc_GCBusyEvent) {
 		void delayedThreadDec() shared {
 			mStats.lock();
 			scope(exit) mStats.unlock();
@@ -324,7 +336,7 @@ public:
 
 		// allow any threads that have called suspendThreadDelayedNoSignals to
 		// continue.
-		version(Windows) gcBusyEvent.setIfInitialized();
+		version(Symgc_GCBusyEvent) gcBusyEvent.setIfInitialized();
 	}
 
 	void clearWorldProbation() shared {
@@ -589,11 +601,22 @@ private:
 			suspendedThreadCount = suspended;
 			return retry;
 		}
-
 		void scanSuspendedThreadsImpl(ScanDg scan) {
 			// use our specialized druntime function
 			import core.thread.symthread;
+			import core.thread.threadbase : ThreadBase;
 			scanWorldPausedData(scan);
+
+			// The thread bins store full pointers to slots that are
+			// allocated from the collector's point of view, but free
+			// as far as their owner is concerned. Nothing else may
+			// reference them, so unless we mark them from here, the
+			// collector can reclaim the slabs they live in while the
+			// bins still point into them.
+			//
+			// We do not rely on the regular TLS marking for this, as
+			// whether it covers this data depends on the platform.
+			scanDruntimeThreadCaches(scan);
 		}
 
 		void clearWorldProbationImpl() {

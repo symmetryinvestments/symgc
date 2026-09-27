@@ -15,7 +15,7 @@ else {
 extern(C):
 
 // druntime API.
-version(Posix) {
+version(linux) {
 	bool thread_preSuspend(void* stackTop);
 	bool thread_postSuspend();
 }
@@ -51,7 +51,7 @@ private void arenaFree(ref CachedExtentMap emap, void* ptr) {
 
 void __sd_gc_pre_suspend_hook(void* stackTop) {
 	version(Symgc_druntime_hooks) {
-		version(Posix) if(!thread_preSuspend(stackTop)) {
+		version(linux) if(!thread_preSuspend(stackTop)) {
 			return;
 		}
 		version(Symgc_pthread_hook) {
@@ -80,7 +80,7 @@ void __sd_gc_pre_suspend_hook(void* stackTop) {
 }
 
 void __sd_gc_post_suspend_hook() {
-	version(Symgc_druntime_hooks) version(Posix) {
+	version(Symgc_druntime_hooks) version(linux) {
 		thread_postSuspend();
 	}
 }

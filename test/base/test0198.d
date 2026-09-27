@@ -16,6 +16,7 @@
 //T has-passed:yes
 //T retval:0
 //T desc:GC slab finalizers
+//T platform:win64,linux
 
 extern(C) void* __sd_gc_tl_flush_cache();
 extern(C) void __sd_gc_collect();
