@@ -208,29 +208,21 @@ standard/unittest configuration is unchanged.
 
 ## 6. Open issue: test0200 double-free
 
-`extent.d(428)` "Slot is already free" fires from
-`ThreadBin.flush → Bin.batchFreeImpl → Extent.free` after some GC
-cycles under test0200's allocation load (4 threads allocating
-32-byte..large garbage with explicit `__sd_gc_collect`).  A secondary
-`arena.d(83)` "Arena was not initialized" assert appears sometimes,
-suggesting extent metadata corruption.
+Mechanism confirmed and fully instrumented; final root cause of the marking
+gap still under investigation.  Full write-up with probe evidence, ruled-out
+hypotheses, applied mitigations and next steps lives in
+`macos-test0200-analysis.md`.
 
-Ruled out with instrumentation (since removed):
-
-- Sweep-time probes in BOTH `collectDenseAllocations` and
-  `collectSparseAllocations`: no evicted slot was present in any
-  registered thread cache bin at eviction time.
-- Refill-time duplicate check inside `ThreadBin.refill`: batches
-  never contain duplicate pointers.
-- `getCapacity`/query paths are read-only; large alloc/free byte
-  accounting is symmetric by construction.
-
-The sparse-slot cap (3.5) removed the deterministic unmarkable-slots
-bug but test0200 still trips.  Next steps: checksum each slab's
-occupancy word across cycles to find who clears the bit of the
-eventually-double-freed slot; suspect the OSX delayed-suspension /
-probation protocol (mach suspend + gcBusyEvent parking) letting one
-thread mutate a slab while another collects.
+Short version: thread bins cache free slots as full pointers whose only
+reference is the owner's `ThreadCache` (TLS).  On this platform the marker
+does not consistently see those pointers, so slabs whose slots are all
+cached-in-bins get freed via the "completely empty" shortcuts while bins
+still point into them — later bin flushes then resolve stale pointers to
+`PageDescriptor(0)` (`arenaIndex == 0`) and hit `"Slot is already free"` /
+`"Arena was not initialized"`.  Mitigations in tree: bin buffers are fed to
+the marker explicitly (`scanDruntimeThreadCaches`) and the scanner's dense
+slab cache is reset every cycle.  These reduce but do not yet eliminate the
+failure.
 
 ## 7. Unittest port progress (session: block/base/arena/extent/rtree/emap)
 

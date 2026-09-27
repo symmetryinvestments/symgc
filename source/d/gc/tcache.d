@@ -47,6 +47,16 @@ private:
 	 * the cost of doing over numerous allocations.
 	 */
 	ThreadBin[ThreadBinCount] bins;
+
+	public const(void*)[] binBufferWords() scope return pure nothrow @nogc {
+		return (cast(const(void**) ) binBuffer.ptr)[0 .. ThreadCacheSize];
+	}
+
+	public PageDescriptor lookupPage(void* ptr) {
+		return emap.lookup(ptr);
+	}
+
+
 	void*[ThreadCacheSize] binBuffer;
 
 	/**

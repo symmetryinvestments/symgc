@@ -601,11 +601,22 @@ private:
 			suspendedThreadCount = suspended;
 			return retry;
 		}
-
 		void scanSuspendedThreadsImpl(ScanDg scan) {
 			// use our specialized druntime function
 			import core.thread.symthread;
+			import core.thread.threadbase : ThreadBase;
 			scanWorldPausedData(scan);
+
+			// The thread bins store full pointers to slots that are
+			// allocated from the collector's point of view, but free
+			// as far as their owner is concerned. Nothing else may
+			// reference them, so unless we mark them from here, the
+			// collector can reclaim the slabs they live in while the
+			// bins still point into them.
+			//
+			// We do not rely on the regular TLS marking for this, as
+			// whether it covers this data depends on the platform.
+			scanDruntimeThreadCaches(scan);
 		}
 
 		void clearWorldProbationImpl() {

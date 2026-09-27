@@ -557,6 +557,13 @@ public:
 		// set up the scan parameters for this batch of scanning.
 		this.managedAddressSpace = scanner.managedAddressSpace;
 		this.gcCycle = scanner.gcCycle;
+
+		// The dense slab cache persists across work items, but slabs
+		// can be freed and their address range recycled into a
+		// different kind of extent between GC cycles. A stale cache
+		// would misroute pointers to the new extent into markDense,
+		// leaving the real marks untouched, so reset it every cycle.
+		this.ldsCache = LastDenseSlabCache.init;
 	}
 
 	void scan(const(void*)[] range) {

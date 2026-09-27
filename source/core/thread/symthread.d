@@ -265,8 +265,19 @@ bool resumeDruntimeThreads(ref uint suspended) {
 	return retry;
 }
 
+void scanDruntimeThreadCaches(ScanDg scan) {
+	import d.gc.tcache : ThreadCache;
+	import d.gc.types : ScanDg;
 
+	foreach (t; ThreadIterator(ThreadBase.sm_tbeg.toThread)) {
+		auto tc = cast(ThreadCache*) t.tlsGCData();
+		if (tc is null) {
+			continue;
+		}
 
+		scan(tc.binBufferWords());
+	}
+}
 
 void clearDruntimeThreadProbation() {
 	import d.gc.tcache;
