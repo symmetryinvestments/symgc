@@ -121,13 +121,10 @@ private:
 	void addRootsImpl(const void[] range) {
 		assert(mutex.isHeld(), "Mutex not held!");
 
-		auto ptr = cast(void*) roots.ptr;
 		auto index = roots.length;
 		auto length = index + 1;
 
-		// We realloc every time. It doesn't really matter at this point.
-		import d.gc.tcache;
-		ptr = threadCache.realloc(ptr, length * void*[].sizeof, true);
+		auto ptr = resizeRoots(length);
 		roots = (cast(const(void*)[]*) ptr)[0 .. length];
 
 		import d.gc.range;
@@ -136,6 +133,7 @@ private:
 		} else {
 			roots[index] = makeRange(range);
 		}
+		setRootsUsedCapacity(length);
 	}
 
 	void removeRootsImpl(const void* ptr) {
@@ -160,6 +158,7 @@ private:
 			roots[length] = [];
 
 			roots = roots[0 .. length];
+			setRootsUsedCapacity(length);
 
 			break;
 		}
@@ -170,10 +169,53 @@ private:
 
 		auto length = roots.length;
 
-		import d.gc.tcache;
-		auto newRoots =
-			threadCache.realloc(roots.ptr, length * void*[].sizeof, true);
+		auto newRoots = resizeRoots(length);
 		roots = (cast(const(void*)[]*) newRoots)[0 .. length];
+		if (length > 0) {
+			setRootsUsedCapacity(length);
+		}
+	}
+
+	void* resizeRoots(size_t length) {
+		assert(mutex.isHeld(), "Mutex not held!");
+
+		auto oldPtr = cast(void*) roots.ptr;
+		if (length == 0) {
+			threadCache.free(oldPtr);
+			return null;
+		}
+
+		// Keep the root table appendable so its metadata records the logical
+		// length. Without that, the scanner would also inspect stale entries in
+		// the unused tail after a root is removed.
+		auto newPtr = threadCache.allocAppendable(
+			length * void*[].sizeof, true, true);
+		assert(newPtr !is null, "Unable to grow global roots!");
+
+		if (oldPtr !is null) {
+			import core.stdc.string : memcpy;
+			memcpy(newPtr, oldPtr, roots.length * void*[].sizeof);
+			threadCache.free(oldPtr);
+		}
+
+		return newPtr;
+	}
+
+	void setRootsUsedCapacity(size_t length) {
+		assert(mutex.isHeld(), "Mutex not held!");
+		assert(roots.ptr !is null, "Root table is not allocated!");
+
+		auto size = length * void*[].sizeof;
+		auto pd = threadCache.maybeGetPageDescriptor(roots.ptr);
+		assert(pd.extent !is null, "Root table is not in GC memory!");
+		if (pd.isSlab()) {
+			import d.gc.slab : SlabAllocInfo;
+			auto si = SlabAllocInfo(pd, roots.ptr);
+			assert(si.setUsedCapacity(size),
+			       "Unable to resize global roots metadata!");
+		} else {
+			pd.extent.setUsedCapacity(size);
+		}
 	}
 
 	void scanRootsImpl(ScanDg scan) {

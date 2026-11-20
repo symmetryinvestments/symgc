@@ -282,14 +282,21 @@ public:
 	                      Finalizer finalizer = null, size_t capacity = 0) {
 		// Reserve bytes for the finalizer if needed.
 		capacity = max(capacity, size);
-		auto asize = capacity + (finalizer !is null) * PointerSize;
+		version (OSX) {
+			enum FinalizerStorageSize = SlotMetadata.sizeof;
+		} else {
+			enum FinalizerStorageSize = PointerSize;
+		}
+		auto finalizerSize = finalizer !is null ? FinalizerStorageSize : 0;
+		if (capacity > MaxAllocationSize - finalizerSize) {
+			return null;
+		}
+		auto asize = capacity + finalizerSize;
 		if (!isAllocatableSize(asize)) {
 			return null;
 		}
 
-		asize = max(asize, 2 * Quantum);
-		assert(sizeClassSupportsMetadata(getSizeClass(asize)),
-		       "allocAppendable got size class without metadata support!");
+		asize = normalizeAppendableSize(asize);
 
 		if (isSmallSize(asize)) {
 			auto ptr = allocSmall(asize, containsPointers, zero);
@@ -314,6 +321,22 @@ public:
 		e.setUsedCapacity(size);
 		e.setFinalizer(finalizer);
 		return ptr;
+	}
+
+private size_t normalizeAppendableSize(size_t asize) {
+		asize = max(asize, 2 * Quantum);
+		if (!isSmallSize(asize)) {
+			return asize;
+		}
+
+		auto sc = getSizeClass(asize);
+		while (!sizeClassSupportsMetadata(sc)) {
+			assert(sc + 1 < ClassCount.Small,
+			       "No metadata-capable appendable size class!");
+			sc++;
+		}
+
+		return getSizeFromClass(sc);
 	}
 
 	void free(void* ptr) {
@@ -398,6 +421,18 @@ public:
 				}
 			}
 
+			// An appendable allocation with a finalizer may have been rounded
+			// up to a metadata-capable class. Preserve it in place while the
+			// requested size still fits, so realloc() cannot silently discard
+			// its finalizer merely because the ordinary size class is smaller.
+			if (samePointerness && newSizeClass != oldSizeClass) {
+				auto si = SlabAllocInfo(pd, ptr);
+				if (si.finalizer !is null && size <= si.slotCapacity
+					&& si.setUsedCapacity(size)) {
+					return ptr;
+				}
+			}
+
 			if (newSizeClass > oldSizeClass) {
 				copySize = getSizeFromClass(oldSizeClass);
 			}
@@ -429,12 +464,24 @@ public:
 			copySize = min(size, e.usedCapacity);
 		}
 
-		auto newPtr = alloc(size, containsPointers, false);
+		// Moving the allocation must not lose its finalizer.
+		Finalizer finalizer = null;
+		if (ec.isSlab()) {
+			if (ec.supportsMetadata) {
+				finalizer = SlabAllocInfo(pd, ptr).finalizer;
+			}
+		} else {
+			finalizer = pd.extent.finalizer;
+		}
+
+		auto newPtr = finalizer is null
+			? alloc(size, containsPointers, false)
+			: allocAppendable(size, containsPointers, false, finalizer);
 		if (newPtr is null) {
 			return null;
 		}
 
-		if (!isSmallSize(size)) {
+		if (finalizer is null && !isSmallSize(size)) {
 			auto npd = getPageDescriptor(newPtr);
 			npd.extent.setUsedCapacity(size);
 		}
@@ -783,12 +830,22 @@ private:
 	 * TLS registration.
 	 */
 	package void addTLSSegment(const void[] range) {
-		auto ptr = cast(void*) tlsSegments.ptr;
 		auto index = tlsSegments.length;
 		auto length = index + 1;
 
-		// We realloc every time. It doesn't really matter at this point.
-		ptr = realloc(ptr, length * void*[].sizeof, true);
+		// Keep the logical range count in slab metadata. This table is itself
+		// scanned as part of ThreadCache's TLS data; ordinary realloc would
+		// leave stale pointers in its unused capacity visible to the scanner.
+		auto oldPtr = cast(void*) tlsSegments.ptr;
+		auto ptr = allocAppendable(length * void*[].sizeof, true, true);
+		assert(ptr !is null, "Unable to grow TLS segment table!");
+
+		if (oldPtr !is null) {
+			import core.stdc.string : memcpy;
+			memcpy(ptr, oldPtr, index * void*[].sizeof);
+			free(oldPtr);
+		}
+
 		tlsSegments = (cast(const(void*)[]*) ptr)[0 .. length];
 
 		import d.gc.range;
@@ -941,6 +998,19 @@ private:
 			import core.sys.linux.sched;
 			return sched_getcpu();
 		 }
+		 else version(OSX) {
+			// Darwin does not expose a cheap sched_getcpu equivalent. Spread
+			// the threads over one group per core using the stable kernel
+			// thread id, so that the number of arenas in use stays bounded
+			// by the core count rather than by the number of threads ever
+			// created, and so that the value fits the arena cache above.
+			import core.sys.darwin.pthread : pthread_threadid_np;
+			import d.gc.cpu;
+			ulong threadId;
+			assert(pthread_threadid_np(self, &threadId) == 0,
+			       "Unable to query the Darwin thread id");
+			return cast(uint) (threadId % getCoreCount());
+		 }
 		 else version(Windows) {
 			import core.sys.windows.winntex;
 			PROCESSOR_NUMBER pnum;
@@ -1001,7 +1071,7 @@ private:
 		tc.free(ptr0);
 		assert(tc.deallocated == expected);
 
-		expected += getAllocSize(max(size, 2 * Quantum));
+		expected += tc.normalizeAppendableSize(size);
 
 		auto ptr1 = tc.allocAppendable(size, false, false);
 		assert(tc.allocated == expected);
@@ -1211,16 +1281,17 @@ private:
 	}
 
 	// Check capacity for an appendable large GC allocation.
-	auto p0 = allocAppendableWithCapacity(100, 16384);
+	enum LargeCapacity = getPageCount(MaxSmallSize + 1) * PageSize;
+	auto p0 = allocAppendableWithCapacity(100, LargeCapacity);
 	scope(exit) tc.free(p0);
 
 	// p0 is appendable and has the minimum large size.
-	// Capacity of segment from p0, length 100 is 16384:
-	assert(tc.getCapacity(p0[0 .. 100]) == 16384);
-	assert(tc.getCapacity(p0[1 .. 100]) == 16383);
-	assert(tc.getCapacity(p0[50 .. 100]) == 16334);
-	assert(tc.getCapacity(p0[99 .. 100]) == 16285);
-	assert(tc.getCapacity(p0[100 .. 100]) == 16284);
+	// Capacity of segment from p0, length 100 is LargeCapacity:
+	assert(tc.getCapacity(p0[0 .. 100]) == LargeCapacity);
+	assert(tc.getCapacity(p0[1 .. 100]) == LargeCapacity - 1);
+	assert(tc.getCapacity(p0[50 .. 100]) == LargeCapacity - 50);
+	assert(tc.getCapacity(p0[99 .. 100]) == LargeCapacity - 99);
+	assert(tc.getCapacity(p0[100 .. 100]) == LargeCapacity - 100);
 
 	// If the slice doesn't go the end of the allocated area
 	// then the capacity must be 0.
@@ -1295,60 +1366,70 @@ private:
 	}
 
 	// Realloc.
-	auto p0 = tc.allocAppendable(20000, false, false);
-	auto asize = getPageCount(20000) * PageSize;
+	version (OSX) {
+		enum InitialSize = MaxSmallSize + PageSize;
+		enum ShrunkSize = MaxSmallSize + 1;
+	} else {
+		enum InitialSize = 20000;
+		enum ShrunkSize = 16000;
+	}
+	auto p0 = tc.allocAppendable(InitialSize, false, false);
+	enum InitialCapacity = getPageCount(InitialSize) * PageSize;
+	enum ShrunkCapacity = getPageCount(ShrunkSize) * PageSize;
+	enum SmallCapacity = getAllocSize(100);
+	auto asize = InitialCapacity;
 	allocated += asize;
 	checkAllocatedByteTracking();
 
-	assert(tc.getCapacity(p0[0 .. 19999]) == 0);
-	assert(tc.getCapacity(p0[0 .. 20000]) == 20480);
-	assert(tc.getCapacity(p0[0 .. 20001]) == 0);
+	assert(tc.getCapacity(p0[0 .. InitialSize - 1]) == 0);
+	assert(tc.getCapacity(p0[0 .. InitialSize]) == InitialCapacity);
+	assert(tc.getCapacity(p0[0 .. InitialSize + 1]) == 0);
 
 	// Decreasing the size of the allocation
 	// should adjust capacity accordingly.
-	auto p1 = tc.realloc(p0, 19999, false);
+	auto p1 = tc.realloc(p0, InitialSize - 1, false);
 	assert(p1 is p0);
 
-	assert(tc.getCapacity(p1[0 .. 19999]) == 20480);
-	assert(tc.getCapacity(p1[0 .. 20000]) == 0);
-	assert(tc.getCapacity(p1[0 .. 20001]) == 0);
+	assert(tc.getCapacity(p1[0 .. InitialSize - 1]) == InitialCapacity);
+	assert(tc.getCapacity(p1[0 .. InitialSize]) == 0);
+	assert(tc.getCapacity(p1[0 .. InitialSize + 1]) == 0);
 
 	// Increasing the size of the allocation increases capacity.
-	auto p2 = tc.realloc(p1, 20001, false);
+	auto p2 = tc.realloc(p1, InitialSize + 1, false);
 	assert(p2 is p1);
 
-	assert(tc.getCapacity(p2[0 .. 19999]) == 0);
-	assert(tc.getCapacity(p2[0 .. 20000]) == 0);
-	assert(tc.getCapacity(p2[0 .. 20001]) == 20480);
+	assert(tc.getCapacity(p2[0 .. InitialSize - 1]) == 0);
+	assert(tc.getCapacity(p2[0 .. InitialSize]) == 0);
+	assert(tc.getCapacity(p2[0 .. InitialSize + 1]) == InitialCapacity);
 
 	// This realloc happens in-place when they shrink a large alloc.
-	auto p3 = tc.realloc(p2, 16000, false);
+	auto p3 = tc.realloc(p2, ShrunkSize, false);
 	assert(p3 is p2);
-	assert(tc.getCapacity(p3[0 .. 16000]) == 16384);
+	assert(tc.getCapacity(p3[0 .. ShrunkSize]) == ShrunkCapacity);
 
-	deallocated += PageSize;
+	deallocated += InitialCapacity - ShrunkCapacity;
 	checkAllocatedByteTracking();
 
 	// The also happen in-place when extending
 	// if there is room for it in the block.
-	auto p4 = tc.realloc(p3, 20000, false);
+	auto p4 = tc.realloc(p3, InitialSize, false);
 	assert(p4 is p3);
-	assert(tc.getCapacity(p4[0 .. 20000]) == 20480);
+	assert(tc.getCapacity(p4[0 .. InitialSize]) == InitialCapacity);
 
-	allocated += PageSize;
+	allocated += InitialCapacity - ShrunkCapacity;
 	checkAllocatedByteTracking();
 
 	// Realloc from large to small size class results in new allocation.
 	auto p5 = tc.realloc(p4, 100, false);
 	assert(p5 !is p4);
 
-	allocated += 112;
-	deallocated += 5 * PageSize;
+	allocated += SmallCapacity;
+	deallocated += InitialCapacity;
 	checkAllocatedByteTracking();
 
 	// Cleanup after ourselves.
 	tc.free(p5);
-	deallocated += 112;
+	deallocated += SmallCapacity;
 	checkAllocatedByteTracking();
 }
 
@@ -1364,10 +1445,11 @@ private:
 
 	// Non-appendable size class 6 (56 bytes)
 	auto nonAppendable = tc.alloc(50, false, false);
+	enum NonAppendableCapacity = getAllocSize(50);
 	scope(exit) tc.free(nonAppendable);
 
 	assert(tc.getCapacity(nonAppendable[0 .. 50]) == 0);
-	assert(tc.allocated == 56);
+	assert(tc.allocated == NonAppendableCapacity);
 
 	// Attempt to extend a non-appendable (always considered fully occupied)
 	assert(!tc.extend(nonAppendable[50 .. 50], 1));
@@ -1394,58 +1476,66 @@ private:
 	assert(!tc.extend(tlPtr[100 .. 100], 1));
 
 	// Check that small appendable alloc can be extended.
-	auto s0 = tc.allocAppendable(42, false, false);
-	assert(tc.allocated == 104);
+	enum AppendableRequest = 42;
+	auto appendableCapacity = tc.normalizeAppendableSize(AppendableRequest);
+	auto remainingCapacity = appendableCapacity - AppendableRequest;
+	auto s0 = tc.allocAppendable(AppendableRequest, false, false);
+	assert(tc.allocated == NonAppendableCapacity + appendableCapacity);
 
-	assert(tc.getCapacity(s0[0 .. 42]) == 48);
+	assert(tc.getCapacity(s0[0 .. AppendableRequest]) == appendableCapacity);
 	assert(tc.extend(s0[0 .. 0], 0));
 	assert(!tc.extend(s0[0 .. 0], 10));
-	assert(!tc.extend(s0[0 .. 41], 10));
-	assert(!tc.extend(s0[1 .. 41], 10));
+	assert(!tc.extend(s0[0 .. AppendableRequest - 1], 10));
+	assert(!tc.extend(s0[1 .. AppendableRequest - 1], 10));
 	assert(!tc.extend(s0[0 .. 20], 10));
 
-	assert(!tc.extend(s0[0 .. 42], 7));
-	assert(!tc.extend(s0[32 .. 42], 7));
-	assert(tc.extend(s0[0 .. 42], 3));
-	assert(tc.getCapacity(s0[0 .. 45]) == 48);
+	assert(!tc.extend(s0[0 .. AppendableRequest], remainingCapacity + 1));
+	assert(!tc.extend(s0[32 .. AppendableRequest], remainingCapacity + 1));
+	auto firstExtension = min(3, remainingCapacity - 2);
+	assert(tc.extend(s0[0 .. AppendableRequest], firstExtension));
+	auto firstExtendedSize = AppendableRequest + firstExtension;
+	assert(tc.getCapacity(s0[0 .. firstExtendedSize]) == appendableCapacity);
 
 	// Check that there are no interference.
-	auto s1 = tc.allocAppendable(42, false, false);
-	assert(tc.allocated == 152);
+	auto s1 = tc.allocAppendable(AppendableRequest, false, false);
+	assert(tc.allocated == NonAppendableCapacity + 2 * appendableCapacity);
 
-	assert(tc.extend(s1[0 .. 42], 1));
-	assert(tc.getCapacity(s1[0 .. 43]) == 48);
-	assert(tc.getCapacity(s0[0 .. 45]) == 48);
+	assert(tc.extend(s1[0 .. AppendableRequest], 1));
+	assert(tc.getCapacity(s1[0 .. AppendableRequest + 1]) == appendableCapacity);
+	assert(tc.getCapacity(s0[0 .. firstExtendedSize]) == appendableCapacity);
 
 	// Extend to the maximum.
-	assert(tc.getCapacity(s0[0 .. 42]) == 0);
-	assert(tc.extend(s0[40 .. 45], 2));
-	assert(tc.getCapacity(s0[0 .. 45]) == 0);
-	assert(tc.getCapacity(s0[0 .. 47]) == 48);
-	assert(!tc.extend(s0[0 .. 47], 2));
-	assert(tc.extend(s0[0 .. 47], 1));
+	assert(tc.getCapacity(s0[0 .. AppendableRequest]) == 0);
+	assert(tc.extend(s0[firstExtendedSize - 5 .. firstExtendedSize], 2));
+	assert(tc.getCapacity(s0[0 .. firstExtendedSize]) == 0);
+	auto secondExtendedSize = firstExtendedSize + 2;
+	assert(tc.getCapacity(s0[0 .. secondExtendedSize]) == appendableCapacity);
+	assert(!tc.extend(s0[0 .. secondExtendedSize],
+	                  appendableCapacity - secondExtendedSize + 1));
+	assert(tc.extend(s0[0 .. secondExtendedSize],
+	                 appendableCapacity - secondExtendedSize));
 
 	// Decreasing the size of the allocation
 	// should adjust capacity accordingly.
-	auto s2 = tc.realloc(s0, 42, false);
+	auto s2 = tc.realloc(s0, AppendableRequest, false);
 	assert(s2 is s0);
-	assert(tc.getCapacity(s2[0 .. 42]) == 48);
-	assert(tc.allocated == 152);
+	assert(tc.getCapacity(s2[0 .. AppendableRequest]) == appendableCapacity);
+	assert(tc.allocated == NonAppendableCapacity + 2 * appendableCapacity);
 
 	// Increasing the size of the allocation
 	// should adjust capacity too.
-	auto s3 = tc.realloc(s2, 45, false);
+	auto s3 = tc.realloc(s2, firstExtendedSize, false);
 	assert(s3 is s2);
-	assert(tc.getCapacity(s3[0 .. 45]) == 48);
-	assert(tc.allocated == 152);
+	assert(tc.getCapacity(s3[0 .. firstExtendedSize]) == appendableCapacity);
+	assert(tc.allocated == NonAppendableCapacity + 2 * appendableCapacity);
 
 	// Increasing the size past what's supported by
 	// the size class will cause a reallocation.
 	auto s4 = tc.realloc(s3, 70, false);
 	assert(s4 !is s3);
 	assert(tc.getCapacity(s4[0 .. 80]) == 80);
-	assert(tc.allocated == 232);
-	assert(tc.deallocated == 48);
+	assert(tc.allocated == NonAppendableCapacity + 2 * appendableCapacity + 80);
+	assert(tc.deallocated == appendableCapacity);
 
 	// Decreasing the size of the allocation so that
 	// it drops down to a lower size class also causes
@@ -1453,8 +1543,8 @@ private:
 	auto s5 = tc.realloc(s4, 60, false);
 	assert(s5 !is s4);
 	assert(tc.getCapacity(s5[0 .. 64]) == 64);
-	assert(tc.allocated == 296);
-	assert(tc.deallocated == 128);
+	assert(tc.allocated == NonAppendableCapacity + 2 * appendableCapacity + 80 + 64);
+	assert(tc.deallocated == appendableCapacity + 80);
 
 	// Cleanup after ourselves.
 	tc.free(s1);
@@ -1480,7 +1570,9 @@ private:
 		assert(tc.allocated == tc.deallocated);
 	}
 
-	enum DeadZoneSize = getPageCount(MaxSmallSize + 1) * PageSize;
+	enum LargeCapacity = getPageCount(MaxSmallSize + 1) * PageSize;
+	enum DeadZoneSize = LargeCapacity;
+	enum ExpandedCapacity = LargeCapacity + PageSize;
 
 	void* allocAppendableWithCapacity(size_t size, size_t capacity) {
 		// Make sure we keep track of all allocations.
@@ -1517,8 +1609,8 @@ private:
 	}
 
 	// Make an appendable alloc:
-	auto p0 = allocAppendableWithCapacity(100, 16384);
-	assert(tc.getCapacity(p0[0 .. 100]) == 16384);
+	auto p0 = allocAppendableWithCapacity(100, LargeCapacity);
+	assert(tc.getCapacity(p0[0 .. 100]) == LargeCapacity);
 
 	// Attempt to extend valid slices with capacity 0.
 	// See getCapacity tests.
@@ -1531,76 +1623,76 @@ private:
 	// Extend by size zero is permitted but has no effect.
 	assert(tc.extend(p0[100 .. 100], 0));
 	assert(tc.extend(p0[0 .. 100], 0));
-	assert(tc.getCapacity(p0[0 .. 100]) == 16384);
+	assert(tc.getCapacity(p0[0 .. 100]) == LargeCapacity);
 	assert(tc.extend(p0[50 .. 100], 0));
-	assert(tc.getCapacity(p0[50 .. 100]) == 16334);
+	assert(tc.getCapacity(p0[50 .. 100]) == LargeCapacity - 50);
 
 	// Attempt extend with insufficient space.
-	assert(tc.getCapacity(p0[100 .. 100]) == 16284);
-	assert(!tc.extend(p0[0 .. 100], 16285));
-	assert(!tc.extend(p0[50 .. 100], 16285));
+	assert(tc.getCapacity(p0[100 .. 100]) == LargeCapacity - 100);
+	assert(!tc.extend(p0[0 .. 100], LargeCapacity - 100 + 1));
+	assert(!tc.extend(p0[50 .. 100], LargeCapacity - 100 + 1));
 
 	// Extending to the limit succeeds.
-	assert(tc.extend(p0[50 .. 100], 16284));
+	assert(tc.extend(p0[50 .. 100], LargeCapacity - 100));
 
 	// Now we're full, and can only extend by zero.
-	assert(tc.extend(p0[0 .. 16384], 0));
-	assert(!tc.extend(p0[0 .. 16384], 1));
+	assert(tc.extend(p0[0 .. LargeCapacity], 0));
+	assert(!tc.extend(p0[0 .. LargeCapacity], 1));
 
 	// Unless we clear the dead zone, in which case we can extend again.
 	tc.free(p0 + DeadZoneSize);
 	deallocated += DeadZoneSize;
 	checkAllocatedByteTracking();
 
-	assert(tc.extend(p0[0 .. 16384], 1));
-	assert(tc.getCapacity(p0[0 .. 16385]) == 16384 + PageSize);
+	assert(tc.extend(p0[0 .. LargeCapacity], 1));
+	assert(tc.getCapacity(p0[0 .. LargeCapacity + 1]) == ExpandedCapacity);
 
 	allocated += PageSize;
 	checkAllocatedByteTracking();
 
 	// Check extensions of slices.
-	auto p1 = allocAppendableWithCapacity(100, 16384);
-	assert(tc.getCapacity(p1[0 .. 100]) == 16384);
+	auto p1 = allocAppendableWithCapacity(100, LargeCapacity);
+	assert(tc.getCapacity(p1[0 .. 100]) == LargeCapacity);
 
 	assert(tc.extend(p1[0 .. 100], 50));
-	assert(tc.getCapacity(p1[100 .. 150]) == 16284);
+	assert(tc.getCapacity(p1[100 .. 150]) == LargeCapacity - 100);
 	assert(tc.extend(p1[0 .. 150], 0));
 
 	assert(tc.getCapacity(p1[0 .. 100]) == 0);
 	assert(tc.extend(p1[0 .. 100], 0));
-	assert(tc.getCapacity(p1[0 .. 150]) == 16384);
+	assert(tc.getCapacity(p1[0 .. 150]) == LargeCapacity);
 
 	// Extent the upper half.
 	assert(tc.extend(p1[125 .. 150], 100));
-	assert(tc.getCapacity(p1[150 .. 250]) == 16234);
+	assert(tc.getCapacity(p1[150 .. 250]) == LargeCapacity - 150);
 
 	assert(tc.getCapacity(p1[125 .. 150]) == 0);
 	assert(tc.extend(p1[125 .. 150], 0));
 
 	assert(tc.extend(p1[125 .. 250], 0));
-	assert(tc.getCapacity(p1[125 .. 250]) == 16259);
-	assert(tc.getCapacity(p1[0 .. 250]) == 16384);
+	assert(tc.getCapacity(p1[125 .. 250]) == LargeCapacity - 125);
+	assert(tc.getCapacity(p1[0 .. 250]) == LargeCapacity);
 
 	// Extend at the very end of the slice.
 	assert(tc.extend(p1[250 .. 250], 200));
-	assert(tc.getCapacity(p1[250 .. 450]) == 16134);
+	assert(tc.getCapacity(p1[250 .. 450]) == LargeCapacity - 250);
 
 	assert(tc.getCapacity(p1[0 .. 250]) == 0);
-	assert(tc.getCapacity(p1[0 .. 450]) == 16384);
+	assert(tc.getCapacity(p1[0 .. 450]) == LargeCapacity);
 
 	// Extend up to all the available space.
-	assert(tc.extend(p1[0 .. 450], 15933));
-	assert(tc.getCapacity(p1[16383 .. 16383]) == 1);
-	assert(tc.extend(p1[16383 .. 16383], 1));
-	assert(tc.getCapacity(p1[0 .. 16384]) == 16384);
+	assert(tc.extend(p1[0 .. 450], LargeCapacity - 450 - 1));
+	assert(tc.getCapacity(p1[LargeCapacity - 1 .. LargeCapacity - 1]) == 1);
+	assert(tc.extend(p1[LargeCapacity - 1 .. LargeCapacity - 1], 1));
+	assert(tc.getCapacity(p1[0 .. LargeCapacity]) == LargeCapacity);
 
 	// When full, we can't extend any more.
-	assert(!tc.extend(p1[0 .. 16384], 1));
-	assert(tc.extend(p1[0 .. 16384], 0));
+	assert(!tc.extend(p1[0 .. LargeCapacity], 1));
+	assert(tc.extend(p1[0 .. LargeCapacity], 0));
 
 	// De-allocate everything.
 	tc.free(p0);
-	deallocated += 5 * PageSize;
+	deallocated += ExpandedCapacity;
 	checkAllocatedByteTracking();
 
 	tc.free(p1 + DeadZoneSize);
@@ -1608,7 +1700,7 @@ private:
 	checkAllocatedByteTracking();
 
 	tc.free(p1);
-	deallocated += 4 * PageSize;
+	deallocated += LargeCapacity;
 	checkAllocatedByteTracking();
 }
 
@@ -1633,12 +1725,13 @@ private:
 
 	// Non-appendable size class 6 (56 bytes)
 	auto nonAppendable = tc.alloc(50, false, false);
+	enum NonAppendableCapacity = getAllocSize(50);
 	scope(exit) {
-		deallocated += 56;
+		deallocated += NonAppendableCapacity;
 		tc.free(nonAppendable);
 	}
 
-	allocated += 56;
+	allocated += NonAppendableCapacity;
 	checkAllocatedByteTracking();
 	assert(tc.getCapacity(nonAppendable[0 .. 50]) == 0);
 
@@ -1667,31 +1760,36 @@ private:
 	assert(!tc.reserve(tlPtr[100 .. 100], 1));
 
 	// Check that we can reserve after small appendable allocations.
-	auto s0 = tc.allocAppendable(42, false, false);
+	enum AppendableRequest = 42;
+	auto appendableCapacity = tc.normalizeAppendableSize(AppendableRequest);
+	auto remainingCapacity = appendableCapacity - AppendableRequest;
+	auto s0 = tc.allocAppendable(AppendableRequest, false, false);
 	scope(exit) {
-		deallocated += 48;
+		deallocated += appendableCapacity;
 		tc.free(s0);
 	}
 
-	allocated += 48;
+	allocated += appendableCapacity;
 	checkAllocatedByteTracking();
-	assert(tc.getCapacity(s0[0 .. 42]) == 48);
+	assert(tc.getCapacity(s0[0 .. AppendableRequest]) == appendableCapacity);
 
 	assert(tc.reserve(s0[0 .. 0], 0));
 	assert(!tc.reserve(s0[0 .. 0], 10));
-	assert(!tc.reserve(s0[0 .. 41], 10));
-	assert(!tc.reserve(s0[1 .. 41], 10));
+	assert(!tc.reserve(s0[0 .. AppendableRequest - 1], 10));
+	assert(!tc.reserve(s0[1 .. AppendableRequest - 1], 10));
 	assert(!tc.reserve(s0[0 .. 20], 10));
 
-	assert(tc.reserve(s0[0 .. 42], 3));
-	assert(tc.reserve(s0[0 .. 42], 6));
-	assert(tc.reserve(s0[32 .. 42], 6));
-	assert(!tc.reserve(s0[0 .. 42], 7));
-	assert(!tc.reserve(s0[32 .. 42], 7));
-	assert(tc.getCapacity(s0[0 .. 42]) == 48);
+	assert(tc.reserve(s0[0 .. AppendableRequest], 3));
+	assert(tc.reserve(s0[0 .. AppendableRequest], remainingCapacity));
+	assert(tc.reserve(s0[32 .. AppendableRequest], remainingCapacity));
+	assert(!tc.reserve(s0[0 .. AppendableRequest], remainingCapacity + 1));
+	assert(!tc.reserve(s0[32 .. AppendableRequest], remainingCapacity + 1));
+	assert(tc.getCapacity(s0[0 .. AppendableRequest]) == appendableCapacity);
 
 	// Check that we can reserve after large appendable allocations.
-	enum DeadZoneSize = getPageCount(MaxSmallSize + 1) * PageSize;
+	enum LargeCapacity = getPageCount(MaxSmallSize + 1) * PageSize;
+	enum DeadZoneSize = LargeCapacity;
+	enum ExpandedCapacity = LargeCapacity + PageSize;
 
 	void* allocAppendableWithCapacity(size_t size, size_t capacity) {
 		// Make sure we keep track of all allocations.
@@ -1727,8 +1825,8 @@ private:
 		return ptr;
 	}
 
-	auto p0 = allocAppendableWithCapacity(100, 16384);
-	assert(tc.getCapacity(p0[0 .. 100]) == 16384);
+	auto p0 = allocAppendableWithCapacity(100, LargeCapacity);
+	assert(tc.getCapacity(p0[0 .. 100]) == LargeCapacity);
 
 	// Reserve from an invalid slice.
 	assert(tc.reserve(p0[0 .. 0], 0));
@@ -1741,31 +1839,31 @@ private:
 	assert(tc.reserve(p0[100 .. 100], 0));
 	assert(tc.reserve(p0[0 .. 100], 0));
 	assert(tc.reserve(p0[50 .. 100], 0));
-	assert(tc.getCapacity(p0[50 .. 100]) == 16334);
+	assert(tc.getCapacity(p0[50 .. 100]) == LargeCapacity - 50);
 
 	// Attempt to reserve past the end of the allocation.
-	assert(tc.getCapacity(p0[100 .. 100]) == 16284);
-	assert(!tc.reserve(p0[0 .. 100], 16285));
-	assert(!tc.reserve(p0[50 .. 100], 16285));
+	assert(tc.getCapacity(p0[100 .. 100]) == LargeCapacity - 100);
+	assert(!tc.reserve(p0[0 .. 100], LargeCapacity - 100 + 1));
+	assert(!tc.reserve(p0[50 .. 100], LargeCapacity - 100 + 1));
 
 	// Reserving to the limit succeeds.
-	assert(tc.reserve(p0[50 .. 100], 16284));
-	assert(tc.getCapacity(p0[0 .. 100]) == 16384);
+	assert(tc.reserve(p0[50 .. 100], LargeCapacity - 100));
+	assert(tc.getCapacity(p0[0 .. 100]) == LargeCapacity);
 
 	// Unless we clear the dead zone, in which case we can reserve more.
 	tc.free(p0 + DeadZoneSize);
 	deallocated += DeadZoneSize;
 	checkAllocatedByteTracking();
 
-	assert(tc.reserve(p0[0 .. 100], 16285));
-	assert(tc.getCapacity(p0[0 .. 100]) == 16384 + PageSize);
+	assert(tc.reserve(p0[0 .. 100], LargeCapacity - 100 + 1));
+	assert(tc.getCapacity(p0[0 .. 100]) == ExpandedCapacity);
 
 	allocated += PageSize;
 	checkAllocatedByteTracking();
 
 	// De-allocate everything.
 	tc.free(p0);
-	deallocated += 5 * PageSize;
+	deallocated += ExpandedCapacity;
 	checkAllocatedByteTracking();
 }
 
@@ -1837,7 +1935,7 @@ private:
 					auto sliceCapacity = tc.getCapacity(a0[s .. s]);
 					auto haveCapacity = sliceCapacity > 0;
 					assert((s == a0Capacity && s > 0 && s < arraySize)
-						== haveCapacity);
+					== haveCapacity);
 
 					// Capacity in non-degenerate case follows standard rule:
 					assert(!haveCapacity || sliceCapacity == arraySize - s);
@@ -1899,13 +1997,15 @@ private:
 	}
 
 	// Finalizers for large allocs:
-	auto s0 = tc.allocAppendable(16384, false, false, destruct!16384);
+	enum LargeFinalizerRequest = MaxSmallSize + 1;
+	auto s0 = tc.allocAppendable(
+		LargeFinalizerRequest, false, false, destruct!LargeFinalizerRequest);
 	tc.destroy(s0);
 	assert(lastKilledAddress == s0);
-	assert(lastKilledUsedCapacity == 16384);
+	assert(lastKilledUsedCapacity == LargeFinalizerRequest);
 
 	// Destroy on non-finalized alloc is harmless:
-	auto s1 = tc.allocAppendable(20000, false, false);
+	auto s1 = tc.allocAppendable(LargeFinalizerRequest + 1, false, false);
 	auto oldDestroyCount = destroyCount;
 	tc.destroy(s1);
 	assert(destroyCount == oldDestroyCount);
@@ -1921,23 +2021,49 @@ private:
 	assert(lastKilledUsedCapacity == 48);
 
 	// Behavior of realloc() on small allocs with finalizers:
-	auto s3 = tc.allocAppendable(70, false, false, destruct!70);
-	assert(tc.getCapacity(s3[0 .. 70]) == 72);
-	auto s4 = tc.realloc(s3, 70, false);
+	version (OSX) {
+		enum FinalizedRequest = 45;
+		enum FinalizedCapacity = 48;
+		enum FinalizedOverflow = 49;
+	} else {
+		enum FinalizedRequest = 70;
+		enum FinalizedCapacity = 72;
+		enum FinalizedOverflow = 75;
+	}
+	auto s3 = tc.allocAppendable(
+		FinalizedRequest, false, false, destruct!FinalizedRequest);
+	assert(tc.getCapacity(s3[0 .. FinalizedRequest]) == FinalizedCapacity);
+	auto s4 = tc.realloc(s3, FinalizedRequest, false);
 	assert(s3 == s4);
 
 	// This is in the same size class, but will not work in-place
-	// given as finalizer occupies final 8 of the 80 bytes in the slot:
-	auto s5 = tc.realloc(s4, 75, false);
+	// given as finalizer occupies the reserved metadata at the end of the slot:
+	auto s5 = tc.realloc(s4, FinalizedOverflow, false);
 	assert(s5 != s4);
 
-	// So we end up with a new alloc, without metadata:
-	assert(tc.getCapacity(s5[0 .. 80]) == 80);
+	// So we end up with a new alloc, which keeps the finalizer:
+	version (OSX) {
+		enum FinalizerStorageSize = SlotMetadata.sizeof;
+	} else {
+		enum FinalizerStorageSize = PointerSize;
+	}
+	enum FinalizedReplacementCapacity =
+		getAllocSize(FinalizedOverflow + FinalizerStorageSize)
+			- FinalizerStorageSize;
+	assert(tc.getCapacity(s5[0 .. FinalizedOverflow])
+		== FinalizedReplacementCapacity);
 
-	// And the finalizer has been discarded:
+	// And the finalizer now belongs to the new allocation:
 	oldDestroyCount = destroyCount;
 	tc.destroy(s5);
-	assert(destroyCount == oldDestroyCount);
+	assert(destroyCount == oldDestroyCount + 1);
+	assert(lastKilledAddress == s5);
+	version(Symgc_druntime_hooks) {
+		// The typeinfo based finalizer reports its element size.
+		assert(lastKilledUsedCapacity == FinalizedRequest);
+	} else {
+		assert(lastKilledUsedCapacity == FinalizedOverflow);
+	}
 
 	assert(tc.allocated == tc.deallocated);
 }

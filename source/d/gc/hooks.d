@@ -126,8 +126,11 @@ void __sd_gc_finalize(void* ptr, size_t usedSpace, void* finalizer) {
 			}
 			else
 			{
-				// if an array, ensure the size is a multiple of the type size.
-				assert(usedSpace % elemSize == 0);
+				// Only whole elements can be finalized. The used size is not
+				// necessarily a multiple of the element size, for instance after
+				// a realloc to an arbitrary size, so ignore the partial tail,
+				// which is what druntime's own GC assumes as well.
+				usedSpace -= usedSpace % elemSize;
 				// just in case, make sure we don't wrap past 0
 				while(usedSpace >= elemSize)
 				{
@@ -147,7 +150,15 @@ void __sd_gc_finalize(void* ptr, size_t usedSpace, void* finalizer) {
 
 void __sd_gc_register_global_segments() {
 	version(Symgc_druntime_hooks) {
-		// druntime handles this on its own
+		// druntime registers its static data via GC.addRange when it uses
+		// symgc. Darwin's integration configuration enables both hooks and
+		// also serves programs driving the C API without druntime's GC, so
+		// register the Mach-O data sections there, like the Linux integration
+		// configuration does through dl_iterate_phdr.
+		version(OSX) version(Symgc_pthread_hook) {
+			import symgc.rt;
+			registerGlobalSegments();
+		}
 	}
 	else {
 		import symgc.rt;

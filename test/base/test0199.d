@@ -45,6 +45,14 @@ size_t allocate(bool pin) {
 			}
 		}
 		auto destructor = cast(void*)typeid(Finalizer);
+	} else version(OSX) {
+		static struct Finalizer {
+			ubyte[15] data;
+			~this() {
+				finalize(null, 0);
+			}
+		}
+		auto destructor = cast(void*)typeid(Finalizer);
 	} else version(linux) {
 		auto destructor = &finalize;
 	}

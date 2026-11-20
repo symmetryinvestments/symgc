@@ -622,7 +622,12 @@ public:
 					}
 
 					auto slotSize = ldb.slotSize;
-					auto i = WorkItem(base + index * slotSize, slotSize);
+					auto address = base + index * slotSize;
+					auto range = computeSlotScanRange(pd, address, index, slotSize);
+					if (range.length == 0) {
+						continue;
+					}
+					auto i = WorkItem(range);
 					if (DepthFirst) {
 						scanBreadthFirst(i, cache);
 						continue;
@@ -698,7 +703,12 @@ public:
 
 				// Make sure we do not starve ourselves. If we do not have
 				// work in advance, then just keep some of it for ourselves.
-				auto i = WorkItem(se.computeRange());
+				auto range = computeSlotScanRange(pd, se.computeAddress(), se.index,
+					binInfos[se.sizeClass].slotSize);
+				if (range.length == 0) {
+					continue;
+				}
+				auto i = WorkItem(range);
 				if (DepthFirst && cursor == 0) {
 					worklist[cursor++] = i;
 				} else {
@@ -717,6 +727,20 @@ public:
 	}
 
 private:
+	static const(void*)[] computeSlotScanRange(PageDescriptor pd,
+			void* address, uint index, size_t slotSize) {
+		// Appendable allocations record their logical payload size in the
+		// slot metadata. Do not scan the unused tail: it may contain stale
+		// values from a previous occupant of the slot.
+		auto capacity = slotSize;
+		auto e = pd.extent;
+		if (pd.extentClass.supportsMetadata && e.hasMetadata(index)) {
+			capacity = SlabAllocInfo(pd, address).usedCapacity;
+		}
+
+		return makeRange(address, address + capacity);
+	}
+
 	static bool markDense(PageDescriptor pd, uint index) {
 		auto e = pd.extent;
 

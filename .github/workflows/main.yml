@@ -23,6 +23,8 @@ jobs:
           - {os: ubuntu-latest,     dc: ldc-beta}
           - {os: ubuntu-24.04-arm,  dc: ldc-1.41.0}
           - {os: ubuntu-24.04-arm,  dc: ldc-beta}
+          - {os: macos-14,          dc: ldc-1.41.0}
+          - {os: macos-14,          dc: ldc-beta}
           - {os: windows-latest,    dc: dmd-master}
           - {os: windows-latest,    dc: dmd-2.112.0}
           - {os: windows-latest,    dc: ldc-beta}

@@ -39,6 +39,10 @@
 			"versions-linux" : [
 				"Symgc_pthread_hook"
 			],
+			"versions-osx" : [
+				"Symgc_pthread_hook",
+				"Symgc_druntime_hooks"
+			],
 			"versions-windows" : [
 				"Symgc_druntime_hooks"
 			]

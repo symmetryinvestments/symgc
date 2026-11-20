@@ -10,7 +10,7 @@ version(Windows) {
 	alias ThreadId = DWORD;
 	private enum THREAD_RETURN_VALUE = DWORD(0);
 	extern (C) ThreadHandle _beginthreadex(void*, uint, LPTHREAD_START_ROUTINE, void*, uint, uint*) nothrow @nogc;
-} else version(linux) {
+} else version(Posix) {
 	import core.sys.posix.pthread : pthread_t, pthread_self;
 	alias ThreadHandle = pthread_t;
 	alias ThreadId = pthread_t;
@@ -30,7 +30,7 @@ bool createGCThread(TSR)(ThreadHandle* thread, TSR start_routine, void* arg) {
  * Create a GC thread that does not prevent stop the world (or block waiting for world stopping to finish)
  */
 bool createGCThread(TSR)(ThreadHandle* thread, ThreadRunner!TSR*  runner) {
-	version(linux) {
+	version(Posix) {
 		alias OSThreadRoutine = extern(C) void* function(void*);
 		version(Symgc_pthread_hook) {
 			// use the trampoline as the thread create function
@@ -51,7 +51,7 @@ bool createGCThread(TSR)(ThreadHandle* thread, ThreadRunner!TSR*  runner) {
 }
 
 void joinGCThread(ThreadHandle tid) {
-	version(linux) {
+	version(Posix) {
 		import core.sys.posix.pthread;
 		void* result;
 		pthread_join(tid, &result);

@@ -1,18 +1,29 @@
 module d.gc.signal;
-version(linux):
+
+version(linux) {
+	version = SymgcSignalSupport;
+} else version(OSX) {
+	version = SymgcSignalSupport;
+}
+
+version(SymgcSignalSupport):
 
 import d.gc.tcache;
 import d.gc.tstate;
 
 import core.sys.posix.signal;
 
-// Power failure imminent.
-enum SIGPWR = 30;
-// CPU time limit exceeded.
-enum SIGXCPU = 24;
-
-enum SIGSUSPEND = SIGPWR;
-enum SIGRESUME = SIGXCPU;
+version(linux) {
+	// These are reserved for the GC by the Linux druntime integration.
+	enum SIGSUSPEND = 30; // SIGPWR
+	enum SIGRESUME = 24;  // SIGXCPU
+} else version(OSX) {
+	// Darwin has no SIGPWR, and druntime does not use signals to suspend
+	// threads there, so nothing is reserved for us. Use the pair druntime
+	// reserves for its own GC on other POSIX systems.
+	enum SIGSUSPEND = SIGUSR1;
+	enum SIGRESUME = SIGUSR2;
+}
 
 void setupSignals() {
 	sigaction_t action;

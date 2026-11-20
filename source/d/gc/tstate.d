@@ -258,7 +258,17 @@ private:
 	checkForState(SuspendState.None);
 	checkForState(SuspendState.Signaled);
 }
-version(Posix)
+version(linux) version = SignalSuspendStateTest;
+version(OSX) {
+	version(Symgc_pthread_hook) {
+		version = SignalSuspendStateTest;
+	} else {
+		version = NativeSuspendStateTest;
+	}
+}
+version(Windows) version = NativeSuspendStateTest;
+
+version(SignalSuspendStateTest)
 @"suspend" unittest {
 	import d.gc.signal;
 	import symgc.test;
@@ -430,7 +440,7 @@ version(Posix)
 	moveToNextStep();
 }
 
-version(Windows)
+version(NativeSuspendStateTest)
 @"suspend" unittest {
 	import symgc.test;
 	import d.gc.thread;

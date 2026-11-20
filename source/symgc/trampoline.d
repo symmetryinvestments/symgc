@@ -43,7 +43,8 @@ extern(C) int resolve_pthread_create(pthread_t* thread, scope const pthread_attr
 	// First, check if there is an interceptor and if so, use it.
 	// This ensure we remain compatible with sanitizers, as they use
 	// a similar trick to intercept various library calls.
-	import core.sys.linux.dlfcn;
+	version(OSX) import core.sys.darwin.dlfcn;
+	else import core.sys.linux.dlfcn;
 	real_pthread_create = cast(PthreadCreateType)
 		dlsym(RTLD_DEFAULT, "__interceptor_pthread_create");
 	if (real_pthread_create !is null) {

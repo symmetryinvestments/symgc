@@ -447,36 +447,42 @@ package:
 	checkFreeLarge(e3);
 
 	// Round 2.
-	auto e4 = makeLargeAlloc(128);
-	auto e5 = makeLargeAlloc(256);
+	enum QuarterBlock = PagesInBlock / 4;
+	enum HalfBlock = PagesInBlock / 2;
+	enum E4Shrunk = QuarterBlock - 8;
+	enum E5Shrunk = HalfBlock / 2;
+	enum E6Shrunk = QuarterBlock / 2;
+
+	auto e4 = makeLargeAlloc(QuarterBlock);
+	auto e5 = makeLargeAlloc(HalfBlock);
 	assert(e5.address is e4.address + e4.size);
 
-	auto e6 = makeLargeAlloc(128);
+	auto e6 = makeLargeAlloc(QuarterBlock);
 	assert(e6.address is e5.address + e5.size);
 
 	auto block = e4.block;
 	assert(block.full);
 
 	// After we shrink something, the block isn't full anymore.
-	checkShrinkLarge(e4, 96);
+	checkShrinkLarge(e4, E4Shrunk);
 	assert(!block.full);
 
-	checkShrinkLarge(e5, 128);
+	checkShrinkLarge(e5, E5Shrunk);
 
 	// We check for the boundary condition, then shrink to the desired size.
-	checkShrinkLarge(e6, 127);
-	checkShrinkLarge(e6, 64);
+	checkShrinkLarge(e6, QuarterBlock - 1);
+	checkShrinkLarge(e6, E6Shrunk);
 
-	// Allocate 128 pages, should go after e5.
-	auto e7 = makeLargeAlloc(128);
+	// Allocate half a block, should go after e5.
+	auto e7 = makeLargeAlloc(E5Shrunk);
 	assert(e7.address is e5.address + e5.size);
 
-	// Allocate 32 pages, should go after e4.
-	auto e8 = makeLargeAlloc(32);
+	// Allocate the hole after e4.
+	auto e8 = makeLargeAlloc(8);
 	assert(e8.address is e4.address + e4.size);
 
-	// Allocate 64 pages, should go after e6.
-	auto e9 = makeLargeAlloc(64);
+	// Allocate the hole after e6.
+	auto e9 = makeLargeAlloc(E6Shrunk);
 	assert(e9.address is e6.address + e6.size);
 
 	// Now full again.
@@ -581,36 +587,44 @@ package:
 		}
 	}
 
-	auto e0 = makeLargeAlloc(35);
-	auto e1 = makeLargeAlloc(64);
+	enum FirstAllocation = max(8, PagesInBlock / 16);
+	enum SecondAllocation = PagesInBlock / 8;
+	enum ThirdAllocation = PagesInBlock / 4;
+	enum FilledThirdAllocation = PagesInBlock - FirstAllocation - SecondAllocation;
+	enum FirstAllocationAfterFree = FirstAllocation + SecondAllocation / 2;
+	enum RemainingHole = SecondAllocation / 2;
+
+	auto e0 = makeLargeAlloc(FirstAllocation);
+	auto e1 = makeLargeAlloc(SecondAllocation);
 	assert(e1.address is e0.address + e0.size);
-	auto e2 = makeLargeAlloc(128);
+	auto e2 = makeLargeAlloc(ThirdAllocation);
 	assert(e2.address is e1.address + e1.size);
 
 	// We cannot grow if there isn't enough space.
-	assert(!arena.growLarge(emap, e0, 36));
-	assert(!arena.growLarge(emap, e2, 414));
+	assert(!arena.growLarge(emap, e0, FirstAllocation + 1));
+	assert(!arena.growLarge(emap, e2, FilledThirdAllocation + 1));
 
 	// But we can if there is space left.
-	checkGrowLarge(e2, 413);
+	checkGrowLarge(e2, FilledThirdAllocation);
 
 	checkFreeLarge(e1);
-	checkGrowLarge(e0, 44);
+	checkGrowLarge(e0, FirstAllocationAfterFree);
 
-	// There are 99 pages left after e0.
+	// There is a finite hole left after e0.
 	// Anything larger than this will fail.
 	assert(!arena.growLarge(emap, e0, uint.max));
 	assert(!arena.growLarge(emap, e0, 9999));
-	assert(!arena.growLarge(emap, e0, 100));
+	assert(!arena.growLarge(emap, e0,
+	                       FirstAllocationAfterFree + RemainingHole + 1));
 
-	// Grow to take over the 99 remaining pages.
-	checkGrowLarge(e0, 99);
+	// Grow to take over the remaining hole.
+	checkGrowLarge(e0, FirstAllocation + SecondAllocation);
 	assert(e0.block.full);
 
 	checkFreeLarge(e2);
 	assert(!e0.block.full);
 
-	checkGrowLarge(e0, 512);
+	checkGrowLarge(e0, PagesInBlock);
 	assert(e0.block.full);
 
 	checkFreeLarge(e0);
@@ -621,10 +635,12 @@ package:
 
 	auto e8 = makeLargeAlloc(64);
 	assert(e8.address is e3.address + e3.size);
+	enum NonStartMaxPages = min(MaxPagesInLargeAlloc,
+	                            PagesInBlock - 35);
 
 	// e8 does not start the block. It can grow but not become huge.
-	checkGrowLarge(e8, MaxPagesInLargeAlloc);
-	assert(!arena.growLarge(emap, e8, MaxPagesInLargeAlloc + 1));
+	checkGrowLarge(e8, NonStartMaxPages);
+	assert(!arena.growLarge(emap, e8, NonStartMaxPages + 1));
 	checkFreeLarge(e8);
 
 	// But e3 can become huge.
@@ -638,9 +654,10 @@ package:
 	checkGrowLarge(e3, 2 * PagesInBlock);
 
 	// Check cross block boundary scenarii.
-	auto e4 = makeLargeAlloc(100);
+	enum TrailingAllocation = PagesInBlock / 4;
+	auto e4 = makeLargeAlloc(TrailingAllocation);
 	assert(e4.address is e3.address + e3.size);
-	auto e5 = makeLargeAlloc(100);
+	auto e5 = makeLargeAlloc(TrailingAllocation);
 	assert(e5.address is e4.address + e4.size);
 
 	// We cannot grow past the block boundary is the next block is used.
@@ -655,21 +672,22 @@ package:
 	checkGrowLarge(e3, 2 * PagesInBlock + 1);
 
 	// We can grow huge allocation within their trailing block.
-	auto e6 = makeLargeAlloc(100);
+	auto e6 = makeLargeAlloc(TrailingAllocation);
 	assert(e6.address is e3.address + e3.size);
-	auto e7 = makeLargeAlloc(100);
+	auto e7 = makeLargeAlloc(TrailingAllocation);
 	assert(e7.address is e6.address + e6.size);
 
 	// There is no room.
 	assert(!arena.growLarge(emap, e3, 2 * PagesInBlock + 2));
 
-	// There is 100 block to be used.
+	// There is one allocation-sized hole to be used.
 	checkFreeLarge(e6);
 	checkGrowLarge(e3, 2 * PagesInBlock + 2);
-	checkGrowLarge(e3, 2 * PagesInBlock + 101);
+	checkGrowLarge(e3, 2 * PagesInBlock + TrailingAllocation + 1);
 
 	// But only up to the point we run into e7.
-	assert(!arena.growLarge(emap, e3, 2 * PagesInBlock + 102));
+	assert(!arena.growLarge(emap, e3,
+	                       2 * PagesInBlock + TrailingAllocation + 2));
 
 	// Make sure the check also work when trying to cross block boundaries.
 	assert(!arena.growLarge(emap, e3, 3 * PagesInBlock));
@@ -677,7 +695,7 @@ package:
 
 	// If we free e7, we are free to extend again.
 	checkFreeLarge(e7);
-	checkGrowLarge(e3, 2 * PagesInBlock + 102);
+	checkGrowLarge(e3, 2 * PagesInBlock + TrailingAllocation + 2);
 	checkGrowLarge(e3, 3 * PagesInBlock);
 	checkGrowLarge(e3, 3 * PagesInBlock + 1);
 

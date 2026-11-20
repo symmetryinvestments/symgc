@@ -327,7 +327,7 @@ private:
 		assert(blockFreeList is null, "There are blocks in the freelist!");
 
 		enum BlockPerExtent = ExtentSize / alignUp(Block.sizeof, Quantum);
-		static assert(BlockPerExtent == 5, "For documentation purposes.");
+		static assert(BlockPerExtent > 0, "Extent cannot hold a block header.");
 
 		auto slot = allocSlotImpl();
 
@@ -387,8 +387,9 @@ struct Block {
 	assert(s0.address + ExtentSize is s1.address);
 	assert(s0.generation == s1.generation);
 
+	enum SlotsPerBlock = BlockSize / ExtentSize;
 	auto prev = s1;
-	foreach (i; 0 .. 16381) {
+	foreach (i; 0 .. SlotsPerBlock - 3) {
 		auto current = base.allocSlot();
 		assert(prev.address + ExtentSize is current.address);
 		assert(prev.generation == current.generation);
@@ -403,6 +404,7 @@ struct Block {
 @"count_blocks" unittest {
 	shared Base base;
 	scope(exit) base.clear();
+	enum SlotsPerBlock = BlockSize / ExtentSize;
 
 	static countBlocks(ref shared Base base) {
 		uint ret = 0;
@@ -429,7 +431,7 @@ struct Block {
 	auto prev = base.allocSlot();
 	assert(indexInBlockGP(prev) == 1);
 
-	foreach (i; 2 .. 16382) {
+	foreach (i; 2 .. SlotsPerBlock - 2) {
 		auto current = base.allocSlot();
 		assert(indexInBlockGP(current) == i);
 		assert(countBlocks(base) == 1);
@@ -445,11 +447,11 @@ struct Block {
 	}
 
 	auto b = base.allocBlock();
-	assert(indexInBlock(b) == 16382);
+	assert(indexInBlock(b) == SlotsPerBlock - 2);
 	assert(countBlocks(base) == 1);
 
 	auto current = base.allocSlot();
-	assert(indexInBlockGP(current) == 16383);
+	assert(indexInBlockGP(current) == SlotsPerBlock - 1);
 	assert(countBlocks(base) == 1);
 	assert(prev.generation == current.generation);
 

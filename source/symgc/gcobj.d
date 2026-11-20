@@ -69,7 +69,7 @@ extern(C) void _d_register_sdc_gc()
 		import d.gc.thread;
 		createProcess();
 	}
-	else version(Posix)
+	else version(linux)
 	{
 		// set druntime's signals to match ours, we are going to use their
 		// signal mechanisms. Have to do this before dmain2/thread_init.

@@ -280,6 +280,7 @@ private:
 		// Assuming the low water mark is a valid value, checking against it
 		// also ensures the bin is not empty.
 		if (likely(c != _low_water)) {
+			*_head = null;
 			_head++;
 			return true;
 		}
@@ -291,6 +292,7 @@ private:
 		}
 
 		// The bin isn't empty, but the low water mark needs to be adjusted.
+		*_head = null;
 		_head++;
 		_low_water += PointerSize;
 		return true;
@@ -519,6 +521,9 @@ uint computeThreadCacheSize() {
 		auto v = cast(size_t) p;
 		assert(v == 0x164 + i);
 	}
+	foreach (i; 100 .. 150) {
+		assert(ptr[i] is null, "Consumed cache entry was not cleared!");
+	}
 
 	// Now we reached the low water mark.
 	foreach (i; 0 .. 50) {
@@ -528,6 +533,9 @@ uint computeThreadCacheSize() {
 
 		auto v = cast(size_t) p;
 		assert(v == 0x196 + i);
+	}
+	foreach (i; 150 .. 200) {
+		assert(ptr[i] is null, "Consumed cache entry was not cleared!");
 	}
 
 	// Now the bin is empty, it all fail.

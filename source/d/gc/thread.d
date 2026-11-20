@@ -5,6 +5,19 @@ import d.gc.tcache;
 import d.gc.tstate;
 import d.gc.types;
 
+/**
+ * Native suspension stops threads from the collector thread (SuspendThread
+ * on Windows, thread_suspend on Darwin) instead of using signals. On Darwin,
+ * the pthread hook configuration keeps using symgc's own signal protocol, so
+ * it must also use the signal based delayed suspension.
+ */
+version(Windows) version = SymgcNativeSuspend;
+version(OSX) {
+	version(Symgc_pthread_hook) {} else {
+		version = SymgcNativeSuspend;
+	}
+}
+
 void createProcess() {
 	import d.gc.base;
 	import d.gc.arena;
@@ -21,6 +34,16 @@ void createProcess() {
 
 		import d.gc.signal;
 		setupSignals();
+	} else version(OSX) {
+		import d.gc.fork;
+		setupFork();
+
+		// The standard Darwin configuration uses Mach thread suspension via
+		// druntime. The pthread hook configuration uses symgc's signal protocol.
+		version(Symgc_pthread_hook) {
+			import d.gc.signal;
+			setupSignals();
+		}
 	}
 	initThread();
 
@@ -120,15 +143,15 @@ void clearWorldProbation() {
 }
 
 void suspendThreadDelayed(d.gc.tstate.ThreadState* tstate) {
-	version(linux) {
+	version(SymgcNativeSuspend) {
+		gThreadState.suspendThreadDelayedNoSignals(tstate);
+	} else {
 		import d.gc.signal : suspendThreadDelayedWithSignals;
 		suspendThreadDelayedWithSignals(tstate);
-	} else version(Windows) {
-		gThreadState.suspendThreadDelayedNoSignals(tstate);
 	}
 }
 
-version(Windows) {
+version(SymgcNativeSuspend) {
 	void delayedThreadInc() {
 		gThreadState.delayedThreadInc();
 	}
@@ -145,15 +168,23 @@ version(Windows) {
 version(Symgc_testing) {
 	void simulateStopTheWorld() {
 		gThreadState.stopTheWorldLock.exclusiveLock();
-		version(Windows) {
-			ThreadState.gcBusyEvent.initialize(true, false);
-			ThreadState.gcBusyEvent.reset();
+		version(SymgcNativeSuspend) {
+			version(Windows) {
+				ThreadState.gcBusyEvent.initialize(true, false);
+				ThreadState.gcBusyEvent.reset();
+			} else version(OSX) {
+				gThreadState.setGCBusy(true);
+			}
 		}
 	}
 
 	void simulateResumeTheWorld() {
-		version(Windows) {
-			ThreadState.gcBusyEvent.setIfInitialized();
+		version(SymgcNativeSuspend) {
+			version(Windows) {
+				ThreadState.gcBusyEvent.setIfInitialized();
+			} else version(OSX) {
+				gThreadState.setGCBusy(false);
+			}
 		}
 		gThreadState.stopTheWorldLock.exclusiveUnlock();
 	}
@@ -192,10 +223,13 @@ private:
 
 	uint registeredThreadCount = 0;
 	uint suspendedThreadCount = 0;
-	version(Windows) {
+	version(SymgcNativeSuspend) {
 		int delayedThreadCount;
-		import core.sync.event;
-		__gshared Event gcBusyEvent;
+		version(Windows) {
+			import core.sync.event;
+			__gshared Event gcBusyEvent;
+		}
+		version(OSX) bool gcBusy;
 	}
 
 	Mutex mThreadList;
@@ -262,9 +296,13 @@ public:
 		// Prevent any new threads from being created
 		stopTheWorldLock.exclusiveLock();
 
-		version(Windows) {
-			gcBusyEvent.initialize(true, false);
-			gcBusyEvent.reset();
+		version(SymgcNativeSuspend) {
+			version(Windows) {
+				gcBusyEvent.initialize(true, false);
+				gcBusyEvent.reset();
+			} else version(OSX) {
+				setGCBusy(true);
+			}
 		}
 
 		uint count;
@@ -275,7 +313,7 @@ public:
 		}
 	}
 
-	version(Windows) {
+	version(SymgcNativeSuspend) {
 		void delayedThreadDec() shared {
 			mStats.lock();
 			scope(exit) mStats.unlock();
@@ -301,6 +339,17 @@ public:
 
 		bool noDelayedThreads() => delayedThreadCount == 0;
 
+		version(OSX) {
+			bool gcIsNotBusy() => !gcBusy;
+
+			void setGCBusy(bool busy) shared {
+				mStats.lock();
+				scope(exit) mStats.unlock();
+
+				gcBusy = busy;
+			}
+		}
+
 		void suspendThreadDelayedNoSignals(d.gc.tstate.ThreadState* tstate) shared {
 			// We are no longer delayed, can be suspended
 			delayedThreadDec();
@@ -312,7 +361,16 @@ public:
 		}
 
 		void waitForGCBusy() shared {
-			gcBusyEvent.wait();
+			version(Windows) {
+				gcBusyEvent.wait();
+			} else version(OSX) {
+				mStats.lock();
+				scope(exit) mStats.unlock();
+
+				mStats.waitFor(
+					&(cast(ThreadState*)&this).gcIsNotBusy
+				);
+			}
 		}
 	}
 
@@ -324,7 +382,10 @@ public:
 
 		// allow any threads that have called suspendThreadDelayedNoSignals to
 		// continue.
-		version(Windows) gcBusyEvent.setIfInitialized();
+		version(SymgcNativeSuspend) {
+			version(Windows) gcBusyEvent.setIfInitialized();
+			version(OSX) setGCBusy(false);
+		}
 	}
 
 	void clearWorldProbation() shared {
@@ -416,6 +477,7 @@ private:
 
 				// If a thread is detached, stop trying.
 				if (count > 32 && ss == SuspendState.Signaled) {
+					version(linux) {
 					import d.gc.proc;
 					if (isDetached(tc.tid)) {
 						tc.state.detach();
@@ -424,6 +486,7 @@ private:
 						scope(exit) mStats.unlock();
 						--registeredThreadCount;
 						continue;
+					}
 					}
 				}
 
